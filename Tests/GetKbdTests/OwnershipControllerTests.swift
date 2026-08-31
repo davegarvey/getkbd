@@ -135,6 +135,8 @@ private final class FakeKeyboardController: KeyboardControlling {
 
     func availableKeyboards() -> [KeyboardDescriptor] { [] }
 
+    func stop() {}
+
     func refreshState() {
         notify()
     }

@@ -44,7 +44,7 @@ private final class BluetoothDeviceBox: @unchecked Sendable {
 
 @MainActor
 final class IOBluetoothKeyboardController: KeyboardControlling {
-    private static let operationTimeoutNanoseconds: UInt64 = 10_000_000_000
+    private static let operationTimeoutNanoseconds: UInt64 = 45_000_000_000
     private static let connectionPollNanoseconds: UInt64 = 100_000_000
 
     private let operationQueue = DispatchQueue(label: "com.getkbd.bluetooth", qos: .userInitiated)
@@ -114,6 +114,36 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         GetKbdLog.event("keyboard.claim.started", configuredKeyboard?.name ?? "")
 
         let box = BluetoothDeviceBox(device: device)
+        let removeResult = await runBluetoothCall { Self.removePairing(box.device) }
+
+        guard let removeResult else {
+            fail("Removing the old Bluetooth pairing timed out")
+            GetKbdLog.error("keyboard.claim.failed", lastError ?? "Timed out")
+            return false
+        }
+
+        guard removeResult == kIOReturnSuccess, !device.isPaired() else {
+            fail("macOS could not remove the old Bluetooth pairing")
+            GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing removal failed")
+            return false
+        }
+
+        GetKbdLog.event("keyboard.pair.started", configuredKeyboard?.name ?? "")
+        let pairResult = await runBluetoothCall { Self.pairDevice(box.device) }
+
+        guard let pairResult else {
+            fail("Bluetooth pairing timed out")
+            GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing timed out")
+            return false
+        }
+
+        guard pairResult == kIOReturnSuccess, device.isPaired() else {
+            fail("The keyboard could not be paired with this Mac (IOReturn \(pairResult))")
+            GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing failed")
+            return false
+        }
+
+        GetKbdLog.event("keyboard.pair.success")
         let returnCode = await runBluetoothCall { box.device.openConnection() }
 
         guard let returnCode else {
@@ -141,28 +171,23 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        guard device.isConnected() else {
-            lastError = nil
-            updateState(.disconnected)
-            return true
-        }
-
         lastError = nil
         updateState(.disconnecting)
         GetKbdLog.event("keyboard.release.started", configuredKeyboard?.name ?? "")
 
         let box = BluetoothDeviceBox(device: device)
-        let returnCode = await runBluetoothCall { box.device.closeConnection() }
+        let returnCode = await runBluetoothCall { Self.removePairing(box.device) }
 
-        guard returnCode != nil else {
-            fail("Bluetooth disconnection timed out")
+        guard let returnCode else {
+            fail("Removing the Bluetooth pairing timed out")
             GetKbdLog.error("keyboard.release.failed", lastError ?? "Timed out")
             return false
         }
 
-        let disconnected = await waitForConnection(device, connected: false)
-        guard disconnected else {
-            fail("Bluetooth still reports the keyboard as connected")
+        guard returnCode == kIOReturnSuccess,
+              !device.isPaired(),
+              !device.isConnected() else {
+            fail("macOS did not remove the keyboard pairing")
             GetKbdLog.error("keyboard.release.failed", lastError ?? "Unknown failure")
             return false
         }
@@ -220,6 +245,60 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         updateState(.failed)
     }
 
+    // Magic Keyboard handoff requires removing the host bond. A connection close alone leaves
+    // macOS free to reconnect the old host, so this undocumented selector is intentionally kept
+    // in one replaceable adapter.
+    nonisolated private static func removePairing(_ device: IOBluetoothDevice) -> IOReturn {
+        if device.isPaired() {
+            let removeSelector = NSSelectorFromString("remove")
+            guard device.responds(to: removeSelector) else { return kIOReturnError }
+            _ = device.perform(removeSelector)
+        }
+
+        if device.isConnected() {
+            _ = device.closeConnection()
+        }
+
+        let deadline = Date().addingTimeInterval(5)
+        while (device.isPaired() || device.isConnected()) && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        return device.isPaired() || device.isConnected() ? kIOReturnError : kIOReturnSuccess
+    }
+
+    nonisolated private static func pairDevice(_ device: IOBluetoothDevice) -> IOReturn {
+        guard let pairer = IOBluetoothDevicePair(device: device) else {
+            return kIOReturnError
+        }
+
+        let delegate = PairingDelegate(deviceName: device.name ?? device.addressString ?? "keyboard")
+        pairer.delegate = delegate
+
+        let startResult = pairer.start()
+        guard startResult == kIOReturnSuccess else {
+            pairer.delegate = nil
+            return startResult
+        }
+
+        let deadline = Date().addingTimeInterval(20)
+        while !delegate.finished && Date() < deadline {
+            _ = RunLoop.current.run(
+                mode: .default,
+                before: min(deadline, Date().addingTimeInterval(0.1))
+            )
+        }
+
+        guard delegate.finished else {
+            pairer.delegate = nil
+            pairer.stop()
+            return kIOReturnError
+        }
+
+        pairer.delegate = nil
+        return delegate.result
+    }
+
     private func waitForConnection(_ device: IOBluetoothDevice, connected: Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(10)
 
@@ -264,5 +343,38 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         }
 
         return name.localizedCaseInsensitiveContains("keyboard")
+    }
+}
+
+private final class PairingDelegate: NSObject, IOBluetoothDevicePairDelegate {
+    let deviceName: String
+    private(set) var finished = false
+    private(set) var result: IOReturn = kIOReturnError
+
+    init(deviceName: String) {
+        self.deviceName = deviceName
+    }
+
+    func devicePairingStarted(_ sender: Any!) {
+        GetKbdLog.event("keyboard.pairing.started", deviceName)
+    }
+
+    func devicePairingFinished(_ sender: Any!, error: IOReturn) {
+        result = error
+        finished = true
+        GetKbdLog.event("keyboard.pairing.finished", "\(deviceName), IOReturn \(error)")
+    }
+
+    func devicePairingUserConfirmationRequest(_ sender: Any!, numericValue: BluetoothNumericValue) {
+        GetKbdLog.event("keyboard.pairing.confirmation", "\(deviceName), code \(numericValue)")
+        (sender as? IOBluetoothDevicePair)?.replyUserConfirmation(true)
+    }
+
+    func devicePairingUserPasskeyNotification(_ sender: Any!, passkey: BluetoothPasskey) {
+        GetKbdLog.event("keyboard.pairing.passkey", "\(deviceName), type \(passkey) on the keyboard")
+    }
+
+    func devicePairingPINCodeRequest(_ sender: Any!) {
+        GetKbdLog.error("keyboard.pairing.pin-required", "Type the Bluetooth PIN on the keyboard")
     }
 }
