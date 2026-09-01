@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @preconcurrency import IOBluetooth
 
@@ -45,6 +46,8 @@ private final class BluetoothDeviceBox: @unchecked Sendable {
 @MainActor
 final class IOBluetoothKeyboardController: KeyboardControlling {
     private static let operationTimeoutNanoseconds: UInt64 = 45_000_000_000
+    nonisolated private static let pairingTimeout: TimeInterval = 45
+    private static let handoffSettleDelayNanoseconds: UInt64 = 1_000_000_000
     private static let connectionPollNanoseconds: UInt64 = 100_000_000
 
     private let operationQueue = DispatchQueue(label: "com.getkbd.bluetooth", qos: .userInitiated)
@@ -94,7 +97,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return
         }
 
-        updateState(device.isConnected() ? .connectedLocal : .disconnected)
+        updateState(device.isPaired() && device.isConnected() ? .connectedLocal : .disconnected)
     }
 
     func connect() async -> Bool {
@@ -103,7 +106,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        if device.isConnected() {
+        if device.isPaired() && device.isConnected() {
             lastError = nil
             updateState(.connectedLocal)
             return true
@@ -127,6 +130,10 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing removal failed")
             return false
         }
+
+        // Magic Keyboards need a short interval after their old bond is removed before they
+        // reliably accept a new pairing attempt.
+        try? await Task.sleep(nanoseconds: Self.handoffSettleDelayNanoseconds)
 
         GetKbdLog.event("keyboard.pair.started", configuredKeyboard?.name ?? "")
         let pairResult = await runBluetoothCall { Self.pairDevice(box.device) }
@@ -159,6 +166,12 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
+        guard device.isPaired() else {
+            fail("Bluetooth connected, but the keyboard pairing did not finish")
+            GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing did not finish")
+            return false
+        }
+
         lastError = nil
         updateState(.connectedLocal)
         GetKbdLog.event("keyboard.claim.success")
@@ -184,9 +197,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        guard returnCode == kIOReturnSuccess,
-              !device.isPaired(),
-              !device.isConnected() else {
+        guard returnCode == kIOReturnSuccess, !device.isPaired() else {
             fail("macOS did not remove the keyboard pairing")
             GetKbdLog.error("keyboard.release.failed", lastError ?? "Unknown failure")
             return false
@@ -253,18 +264,23 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             let removeSelector = NSSelectorFromString("remove")
             guard device.responds(to: removeSelector) else { return kIOReturnError }
             _ = device.perform(removeSelector)
+
+            // Do not explicitly close a Magic Keyboard after removing its bond. The Bluetooth
+            // stack may leave the accessory unavailable for the next host if the connection is
+            // closed as a separate operation immediately afterward.
+            let deadline = Date().addingTimeInterval(5)
+            while device.isPaired() && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+
+            return device.isPaired() ? kIOReturnError : kIOReturnSuccess
         }
 
         if device.isConnected() {
-            _ = device.closeConnection()
+            return device.closeConnection()
         }
 
-        let deadline = Date().addingTimeInterval(5)
-        while (device.isPaired() || device.isConnected()) && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-
-        return device.isPaired() || device.isConnected() ? kIOReturnError : kIOReturnSuccess
+        return kIOReturnSuccess
     }
 
     nonisolated private static func pairDevice(_ device: IOBluetoothDevice) -> IOReturn {
@@ -281,7 +297,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return startResult
         }
 
-        let deadline = Date().addingTimeInterval(20)
+        let deadline = Date().addingTimeInterval(Self.pairingTimeout)
         while !delegate.finished && Date() < deadline {
             _ = RunLoop.current.run(
                 mode: .default,
@@ -362,6 +378,7 @@ private final class PairingDelegate: NSObject, IOBluetoothDevicePairDelegate {
     func devicePairingFinished(_ sender: Any!, error: IOReturn) {
         result = error
         finished = true
+        CFRunLoopStop(CFRunLoopGetCurrent())
         GetKbdLog.event("keyboard.pairing.finished", "\(deviceName), IOReturn \(error)")
     }
 
@@ -371,10 +388,31 @@ private final class PairingDelegate: NSObject, IOBluetoothDevicePairDelegate {
     }
 
     func devicePairingUserPasskeyNotification(_ sender: Any!, passkey: BluetoothPasskey) {
-        GetKbdLog.event("keyboard.pairing.passkey", "\(deviceName), type \(passkey) on the keyboard")
+        let formattedPasskey = String(format: "%06u", passkey)
+        GetKbdLog.event("keyboard.pairing.passkey", "\(deviceName), type \(formattedPasskey) on the keyboard")
+        Self.showPairingPrompt(
+            title: "Type the passkey on the keyboard",
+            message: "Type \(formattedPasskey) on \(deviceName), then press Return."
+        )
     }
 
     func devicePairingPINCodeRequest(_ sender: Any!) {
         GetKbdLog.error("keyboard.pairing.pin-required", "Type the Bluetooth PIN on the keyboard")
+        Self.showPairingPrompt(
+            title: "Bluetooth PIN required",
+            message: "Type the Bluetooth PIN on \(deviceName), then press Return."
+        )
+    }
+
+    private static func showPairingPrompt(title: String, message: String) {
+        Task { @MainActor in
+            NSApp.activate(ignoringOtherApps: true)
+
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = message
+            alert.addButton(withTitle: "Continue")
+            alert.runModal()
+        }
     }
 }

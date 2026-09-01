@@ -149,15 +149,37 @@ struct AppSettings: Codable, Equatable, Sendable {
     var selectedKeyboard: KeyboardDescriptor?
     var selectedDisplay: DisplayDescriptor?
     var claimOnMonitorConnect: Bool
+    var monitorTakesOwnershipFromManual: Bool
     var releaseOnMonitorDisconnect: Bool
     var releaseBeforeSleep: Bool
     var shortcut: ShortcutConfiguration
     var launchAtLogin: Bool
 
+    init(
+        selectedKeyboard: KeyboardDescriptor?,
+        selectedDisplay: DisplayDescriptor?,
+        claimOnMonitorConnect: Bool,
+        monitorTakesOwnershipFromManual: Bool,
+        releaseOnMonitorDisconnect: Bool,
+        releaseBeforeSleep: Bool,
+        shortcut: ShortcutConfiguration,
+        launchAtLogin: Bool
+    ) {
+        self.selectedKeyboard = selectedKeyboard
+        self.selectedDisplay = selectedDisplay
+        self.claimOnMonitorConnect = claimOnMonitorConnect
+        self.monitorTakesOwnershipFromManual = monitorTakesOwnershipFromManual
+        self.releaseOnMonitorDisconnect = releaseOnMonitorDisconnect
+        self.releaseBeforeSleep = releaseBeforeSleep
+        self.shortcut = shortcut
+        self.launchAtLogin = launchAtLogin
+    }
+
     static let initial = AppSettings(
         selectedKeyboard: nil,
         selectedDisplay: nil,
         claimOnMonitorConnect: true,
+        monitorTakesOwnershipFromManual: false,
         releaseOnMonitorDisconnect: true,
         releaseBeforeSleep: true,
         shortcut: .default,
@@ -167,10 +189,39 @@ struct AppSettings: Codable, Equatable, Sendable {
     var needsOnboarding: Bool {
         selectedKeyboard == nil || selectedDisplay == nil
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case selectedKeyboard
+        case selectedDisplay
+        case claimOnMonitorConnect
+        case monitorTakesOwnershipFromManual
+        case releaseOnMonitorDisconnect
+        case releaseBeforeSleep
+        case shortcut
+        case launchAtLogin
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            selectedKeyboard: try container.decodeIfPresent(KeyboardDescriptor.self, forKey: .selectedKeyboard),
+            selectedDisplay: try container.decodeIfPresent(DisplayDescriptor.self, forKey: .selectedDisplay),
+            claimOnMonitorConnect: try container.decode(Bool.self, forKey: .claimOnMonitorConnect),
+            monitorTakesOwnershipFromManual: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .monitorTakesOwnershipFromManual
+            ) ?? false,
+            releaseOnMonitorDisconnect: try container.decode(Bool.self, forKey: .releaseOnMonitorDisconnect),
+            releaseBeforeSleep: try container.decode(Bool.self, forKey: .releaseBeforeSleep),
+            shortcut: try container.decode(ShortcutConfiguration.self, forKey: .shortcut),
+            launchAtLogin: try container.decode(Bool.self, forKey: .launchAtLogin)
+        )
+    }
 }
 
 struct AutomaticBehavior: Equatable, Sendable {
     var claimOnMonitorConnect: Bool
+    var monitorTakesOwnershipFromManual: Bool
     var releaseOnMonitorDisconnect: Bool
     var releaseBeforeSleep: Bool
 }

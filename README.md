@@ -14,6 +14,7 @@ It targets the latest macOS SDK (macOS 26 or later) and is intentionally optimiz
 - Provides `Get Keyboard` and `Release Keyboard` menu commands.
 - Registers a configurable global shortcut, defaulting to `Ctrl+Opt+Cmd+K`.
 - Stores keyboard, monitor, automatic-behaviour, shortcut, and login-item settings.
+- Can optionally let a connected monitor take ownership from a manual claim.
 - Uses display UUIDs rather than display names for the configured monitor.
 - Keeps all Bluetooth operations serialized and verifies the resulting connection state.
 
@@ -57,7 +58,8 @@ The handoff is:
 1. The old Mac removes its local pairing when its monitor disconnects.
 2. The new Mac removes any stale local record, pairs the keyboard, connects, and verifies it.
 
-The keyboard may need to be awake during pairing. Tap a key or power-cycle it if a claim fails.
+The keyboard must be awake and discoverable during pairing. Tap a key or power-cycle it if a claim
+fails. Some pairing modes show a passkey that must be typed on the keyboard and followed by Return.
 If the previous Mac is already asleep, shut down, or has getkbd stopped before removing its local
 pairing, this MVP cannot remotely preempt that host; peer coordination is the next hardening step.
 

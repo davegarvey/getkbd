@@ -83,6 +83,13 @@ final class OwnershipController {
         }
 
         keyboard.refreshState()
+        if monitorPresent,
+           behavior.claimOnMonitorConnect,
+           behavior.monitorTakesOwnershipFromManual,
+           ownershipReason == .manual {
+            ownershipReason = .monitor
+        }
+
         if keyboard.state == .connectedLocal {
             if !monitorPresent,
                behavior.releaseOnMonitorDisconnect,
@@ -133,8 +140,11 @@ final class OwnershipController {
         if keyboard.state == .connectedLocal {
             if ownershipReason == .none {
                 ownershipReason = .existing
+            } else if ownershipReason == .manual,
+                      behavior.monitorTakesOwnershipFromManual {
+                ownershipReason = .monitor
             }
-        } else if ownershipReason != .manual {
+        } else if ownershipReason != .manual || behavior.monitorTakesOwnershipFromManual {
             ownershipReason = .monitor
         }
 
@@ -242,7 +252,14 @@ final class OwnershipController {
             sleepOwnershipReason = nil
             ownershipReason = reasonBeforeSleep
 
-            if reasonBeforeSleep == .monitor,
+            if reasonBeforeSleep == .manual,
+               monitorPresent,
+               behavior.claimOnMonitorConnect,
+               behavior.monitorTakesOwnershipFromManual {
+                ownershipReason = .monitor
+            }
+
+            if ownershipReason == .monitor,
                !monitorPresent,
                behavior.releaseOnMonitorDisconnect {
                 desiredState = .disconnected

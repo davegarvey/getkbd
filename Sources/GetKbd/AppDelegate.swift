@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyboard: keyboardController,
             behavior: AutomaticBehavior(
                 claimOnMonitorConnect: settings.claimOnMonitorConnect,
+                monitorTakesOwnershipFromManual: settings.monitorTakesOwnershipFromManual,
                 releaseOnMonitorDisconnect: settings.releaseOnMonitorDisconnect,
                 releaseBeforeSleep: settings.releaseBeforeSleep
             )
@@ -131,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ownershipController.updateBehavior(
             AutomaticBehavior(
                 claimOnMonitorConnect: effectiveSettings.claimOnMonitorConnect,
+                monitorTakesOwnershipFromManual: effectiveSettings.monitorTakesOwnershipFromManual,
                 releaseOnMonitorDisconnect: effectiveSettings.releaseOnMonitorDisconnect,
                 releaseBeforeSleep: effectiveSettings.releaseBeforeSleep
             ),

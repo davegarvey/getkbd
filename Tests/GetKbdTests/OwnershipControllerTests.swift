@@ -72,6 +72,34 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
     }
 
+    func testMonitorConnectionCanTakeOwnershipAfterManualClaim() async {
+        let keyboard = FakeKeyboardController()
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            behavior: AutomaticBehavior(
+                claimOnMonitorConnect: true,
+                monitorTakesOwnershipFromManual: true,
+                releaseOnMonitorDisconnect: true,
+                releaseBeforeSleep: true
+            )
+        )
+
+        controller.start(monitorPresent: false)
+        controller.manualClaim()
+        await controller.waitForIdle()
+
+        controller.monitorConnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(controller.snapshot.ownershipReason, .monitor)
+
+        controller.monitorDisconnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+    }
+
     func testSleepReleasesManualOwnership() async {
         let keyboard = FakeKeyboardController()
         let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
@@ -189,6 +217,7 @@ private final class FakeKeyboardController: KeyboardControlling {
 private extension AutomaticBehavior {
     static let allEnabled = AutomaticBehavior(
         claimOnMonitorConnect: true,
+        monitorTakesOwnershipFromManual: false,
         releaseOnMonitorDisconnect: true,
         releaseBeforeSleep: true
     )

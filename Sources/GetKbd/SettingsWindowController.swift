@@ -12,6 +12,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let displayPopup = NSPopUpButton()
     private let keyboardStateLabel = NSTextField(labelWithString: "")
     private let autoClaimCheckbox = NSButton(checkboxWithTitle: "Get keyboard when monitor connects", target: nil, action: nil)
+    private let monitorOwnershipCheckbox = NSButton(
+        checkboxWithTitle: "Let the monitor take ownership after a manual claim",
+        target: nil,
+        action: nil
+    )
     private let autoReleaseCheckbox = NSButton(checkboxWithTitle: "Release keyboard when monitor disconnects", target: nil, action: nil)
     private let sleepCheckbox = NSButton(checkboxWithTitle: "Release keyboard before sleep", target: nil, action: nil)
     private let loginCheckbox = NSButton(checkboxWithTitle: "Launch getkbd at login", target: nil, action: nil)
@@ -64,6 +69,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         keyboardStateLabel.stringValue = keyboard.state.menuTitle
         autoClaimCheckbox.state = settings.claimOnMonitorConnect ? .on : .off
+        monitorOwnershipCheckbox.state = settings.monitorTakesOwnershipFromManual ? .on : .off
         autoReleaseCheckbox.state = settings.releaseOnMonitorDisconnect ? .on : .off
         sleepCheckbox.state = settings.releaseBeforeSleep ? .on : .off
         loginCheckbox.state = settings.launchAtLogin ? .on : .off
@@ -122,14 +128,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         displayPopup.widthAnchor.constraint(equalToConstant: 390).isActive = true
         stack.addArrangedSubview(displayPopup)
 
+        let refreshButton = NSButton(
+            title: "Refresh Keyboard and Monitor Lists",
+            target: self,
+            action: #selector(refreshSelectors)
+        )
+        refreshButton.bezelStyle = .rounded
+        stack.addArrangedSubview(refreshButton)
+
         stack.addArrangedSubview(sectionTitle("Automatic Behaviour"))
         autoClaimCheckbox.target = self
         autoClaimCheckbox.action = #selector(behaviorChanged)
+        monitorOwnershipCheckbox.target = self
+        monitorOwnershipCheckbox.action = #selector(behaviorChanged)
         autoReleaseCheckbox.target = self
         autoReleaseCheckbox.action = #selector(behaviorChanged)
         sleepCheckbox.target = self
         sleepCheckbox.action = #selector(behaviorChanged)
         stack.addArrangedSubview(autoClaimCheckbox)
+        stack.addArrangedSubview(monitorOwnershipCheckbox)
         stack.addArrangedSubview(autoReleaseCheckbox)
         stack.addArrangedSubview(sleepCheckbox)
 
@@ -234,9 +251,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         commit(settings)
     }
 
+    @objc private func refreshSelectors() {
+        reload()
+    }
+
     @objc private func behaviorChanged() {
         var settings = settingsStore.value
         settings.claimOnMonitorConnect = autoClaimCheckbox.state == .on
+        settings.monitorTakesOwnershipFromManual = monitorOwnershipCheckbox.state == .on
         settings.releaseOnMonitorDisconnect = autoReleaseCheckbox.state == .on
         settings.releaseBeforeSleep = sleepCheckbox.state == .on
         commit(settings)

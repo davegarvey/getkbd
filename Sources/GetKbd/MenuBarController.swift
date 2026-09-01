@@ -60,6 +60,9 @@ final class MenuBarController: NSObject {
         addLabel("Keyboard: \(keyboardName)", to: menu)
         addLabel(ownership.snapshot.keyboardState.menuTitle, to: menu)
         addLabel("Ownership: \(ownership.snapshot.ownershipReason.menuTitle)", to: menu, secondary: true)
+        if let errorMessage = ownership.snapshot.errorMessage {
+            addLabel(errorMessage, to: menu, secondary: true)
+        }
 
         let monitorTitle = displayMonitor.configuredDisplayIdentifier == nil
             ? "Desk monitor: Not configured"
