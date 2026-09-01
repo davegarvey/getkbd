@@ -72,8 +72,8 @@ When getkbd releases the keyboard while the selected external display remains at
 through a KVM, it temporarily mirrors the built-in display onto the selected monitor. Before doing
 so, it makes the laptop the primary display and mirror master, so the laptop keeps its native
 scaling and windows do not move to the shared display while this Mac is inactive. getkbd stores the
-current extended layout and display modes, then restores them after this Mac successfully claims
-the keyboard, unmirrors the displays, and restores the selected monitor as the primary display.
+current extended layout and display modes, then restores them when this Mac becomes active again,
+unmirrors the displays, and restores the selected monitor as the primary display.
 If the display has already disappeared, or the laptop is in closed-lid mode without a built-in
 display available, there is no local display to mirror and the release proceeds normally.
 

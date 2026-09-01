@@ -56,51 +56,67 @@ final class MenuBarController: NSObject {
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        let settings = settingsStore.value
+        let snapshot = ownership.snapshot
 
         addLabel("getkbd", to: menu, bold: true)
 
-        let keyboardName = settingsStore.value.selectedKeyboard?.name ?? "Keyboard not configured"
-        addLabel("Keyboard: \(keyboardName)", to: menu)
-        addLabel(ownership.snapshot.keyboardState.menuTitle, to: menu)
-        addLabel("Ownership: \(ownership.snapshot.ownershipReason.menuTitle)", to: menu, secondary: true)
+        let keyboardName = settings.selectedKeyboard?.name ?? "Keyboard not configured"
+        addLabel(keyboardName, to: menu, bold: true)
+        addLabel(
+            snapshot.keyboardState.menuTitle,
+            to: menu,
+            color: snapshot.keyboardState == .connectedLocal ? .systemGreen : .secondaryLabelColor
+        )
 
-        let setupStatus = Self.setupStatus(for: settingsStore.value, peer: peer)
-        addLabel("Setup: \(setupStatus)", to: menu, secondary: setupStatus == "Ready")
-        if settingsStore.value.automaticSource == .usbHub, peer.isPaired {
-            addLabel(peer.peerDetail, to: menu, secondary: true)
-            addLabel("Verification: \(peer.verificationTitle)", to: menu, secondary: true)
+        let setupStatus = Self.setupStatus(for: settings, peer: peer)
+        let setupColor: NSColor = setupStatus == "Ready" ? .systemGreen : .systemOrange
+        addLabel(
+            setupStatus == "Ready" ? "Ready to switch" : setupStatus,
+            to: menu,
+            secondary: true,
+            color: setupColor
+        )
+
+        addLabel("Switching: \(settings.automaticSource.menuTitle)", to: menu, secondary: true)
+
+        let monitorStatus = displayMonitor.configuredDisplayIdentifier == nil
+            ? "Display not configured"
+            : (snapshot.monitorPresent ? "Display connected" : "Display disconnected")
+        let hubStatus = settings.selectedUSBHub == nil
+            ? "Input signal not configured"
+            : (snapshot.usbHubPresent ? "Input signal connected" : "Input signal disconnected")
+        switch settings.automaticSource {
+        case .monitor:
+            addLabel(monitorStatus, to: menu, secondary: true)
+        case .usbHub:
+            addLabel("\(monitorStatus) | \(hubStatus)", to: menu, secondary: true)
+        case .off:
+            break
         }
 
-        if ownership.snapshot.displayHandoffState != .idle,
-           ownership.snapshot.displayHandoffState != .restored {
-            addLabel(ownership.snapshot.displayHandoffState.menuTitle, to: menu, secondary: true)
-        }
-        if let errorMessage = ownership.snapshot.errorMessage {
-            addLabel(errorMessage, to: menu, secondary: true)
-        }
-        if let displayError = ownership.snapshot.displayHandoffError {
-            addLabel(displayError, to: menu, secondary: true)
+        if settings.automaticSource == .usbHub, peer.isPaired {
+            addLabel(
+                "Other Mac: \(peer.peerName ?? "Connected") | \(peer.verificationTitle)",
+                to: menu,
+                secondary: true
+            )
         }
 
-        let monitorTitle = displayMonitor.configuredDisplayIdentifier == nil
-            ? "Desk monitor: Not configured"
-            : "Desk monitor: \(ownership.snapshot.monitorPresent ? "Connected" : "Disconnected")"
-        addLabel(monitorTitle, to: menu)
-        let hubTitle = settingsStore.value.selectedUSBHub == nil
-            ? "KVM USB hub: Not configured"
-            : "KVM USB hub: \(ownership.snapshot.usbHubPresent ? "Connected" : "Disconnected")"
-        addLabel(hubTitle, to: menu)
-        addLabel("Switching method: \(settingsStore.value.automaticSource.menuTitle)", to: menu, secondary: true)
-        if settingsStore.value.launchAtLogin {
-            let loginStatus = LoginItemController.statusDescription()
-            if loginStatus != "Enabled" {
-                addLabel("Launch at login: \(loginStatus)", to: menu, secondary: true)
-            }
+        if snapshot.displayHandoffState != .idle,
+           snapshot.displayHandoffState != .restored {
+            addLabel(snapshot.displayHandoffState.menuTitle, to: menu, secondary: true)
+        }
+        if let errorMessage = snapshot.errorMessage {
+            addLabel(errorMessage, to: menu, secondary: true, color: .systemRed)
+        }
+        if let displayError = snapshot.displayHandoffError {
+            addLabel(displayError, to: menu, secondary: true, color: .systemRed)
         }
 
         menu.addItem(.separator())
 
-        if ownership.snapshot.displayHandoffState == .attentionRequired {
+        if snapshot.displayHandoffState == .attentionRequired {
             let restoreItem = NSMenuItem(
                 title: "Restore Display Layout",
                 action: #selector(retryDisplayLayout),
@@ -110,7 +126,7 @@ final class MenuBarController: NSObject {
             menu.addItem(restoreItem)
         }
 
-        let shortcut = settingsStore.value.shortcut
+        let shortcut = settings.shortcut
         let getItem = NSMenuItem(
             title: "Get Keyboard",
             action: #selector(getKeyboard),
@@ -118,8 +134,7 @@ final class MenuBarController: NSObject {
         )
         getItem.target = self
         getItem.keyEquivalentModifierMask = Self.cocoaModifiers(for: shortcut)
-        getItem.isEnabled = settingsStore.value.selectedKeyboard != nil && !ownership.snapshot.isBusy
-        menu.addItem(getItem)
+        getItem.isEnabled = settings.selectedKeyboard != nil && !snapshot.isBusy
 
         let releaseItem = NSMenuItem(
             title: "Release Keyboard",
@@ -127,30 +142,38 @@ final class MenuBarController: NSObject {
             keyEquivalent: ""
         )
         releaseItem.target = self
-        releaseItem.isEnabled = settingsStore.value.selectedKeyboard != nil && !ownership.snapshot.isBusy
-        menu.addItem(releaseItem)
+        releaseItem.isEnabled = settings.selectedKeyboard != nil && !snapshot.isBusy
 
-        if ownership.snapshot.keyboardState == .failed {
+        if snapshot.keyboardState == .connectedLocal {
+            menu.addItem(releaseItem)
+            menu.addItem(getItem)
+        } else {
+            menu.addItem(getItem)
+            menu.addItem(releaseItem)
+        }
+
+        if snapshot.keyboardState == .failed {
             let retryItem = NSMenuItem(
                 title: ownership.desiredState == .disconnected ? "Retry Release" : "Retry Get Keyboard",
                 action: #selector(retryKeyboard),
                 keyEquivalent: ""
             )
             retryItem.target = self
-            retryItem.isEnabled = settingsStore.value.selectedKeyboard != nil
+            retryItem.isEnabled = settings.selectedKeyboard != nil
             menu.addItem(retryItem)
         }
 
         menu.addItem(.separator())
 
-        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        let settingsTitle = setupStatus == "Ready" ? "Settings..." : "Finish Setup..."
+        let settingsItem = NSMenuItem(title: settingsTitle, action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         settingsItem.keyEquivalentModifierMask = [.command]
         menu.addItem(settingsItem)
 
         let shortcutTitle = shortcutAvailable
-            ? "Get Keyboard shortcut: \(shortcut.displayString)"
-            : "Get Keyboard shortcut: \(shortcut.displayString) (unavailable)"
+            ? "Shortcut: \(shortcut.displayString)"
+            : "Shortcut: \(shortcut.displayString) (unavailable)"
         addLabel(shortcutTitle, to: menu, secondary: true)
 
         let quitItem = NSMenuItem(title: "Quit getkbd", action: #selector(quitApplication), keyEquivalent: "q")
@@ -161,20 +184,29 @@ final class MenuBarController: NSObject {
         return menu
     }
 
-    private func addLabel(_ title: String, to menu: NSMenu, bold: Bool = false, secondary: Bool = false) {
+    private func addLabel(
+        _ title: String,
+        to menu: NSMenu,
+        bold: Bool = false,
+        secondary: Bool = false,
+        color: NSColor? = nil
+    ) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         if bold {
             item.attributedTitle = NSAttributedString(
                 string: title,
-                attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]
+                attributes: [
+                    .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize),
+                    .foregroundColor: color ?? NSColor.labelColor
+                ]
             )
-        } else if secondary {
+        } else if secondary || color != nil {
             item.attributedTitle = NSAttributedString(
                 string: title,
                 attributes: [
-                    .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                    .foregroundColor: NSColor.secondaryLabelColor
+                    .font: NSFont.systemFont(ofSize: secondary ? NSFont.smallSystemFontSize : NSFont.systemFontSize),
+                    .foregroundColor: color ?? NSColor.secondaryLabelColor
                 ]
             )
         }
