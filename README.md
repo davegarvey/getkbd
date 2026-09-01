@@ -68,8 +68,13 @@ The selected monitor is a safety condition in KVM mode. If either the monitor or
 absent, getkbd releases the selected keyboard. If both Macs see the selected hub at the same time,
 the KVM does not expose a unique active-host signal and automatic switching is unsafe.
 
-getkbd does not change macOS display arrangement or mirroring. The KVM handles the external display;
-configure mirroring separately in **System Settings > Displays** if needed.
+When getkbd releases the keyboard while the selected external display remains attached, for example
+through a KVM, it temporarily mirrors the built-in and external displays, with the selected monitor
+as the mirror master, so the local desktop is not left extended into the desktop being shown by the
+other Mac. getkbd stores the current extended layout and display modes, then restores them after
+this Mac successfully claims the keyboard. The selected monitor is restored as the primary display.
+If the display has already disappeared, or the laptop is in closed-lid mode without a built-in
+display available, there is no local display to mirror and the release proceeds normally.
 
 For manual switching:
 

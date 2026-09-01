@@ -29,7 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 releaseOnMonitorDisconnect: settings.releaseOnMonitorDisconnect,
                 releaseBeforeSleep: settings.releaseBeforeSleep,
                 automaticSource: settings.automaticSource
-            )
+            ),
+            displayHandoff: displayMonitor
         )
 
         menuBarController = MenuBarController(
@@ -58,6 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 self?.ownershipController.monitorDisconnected()
             }
+        }
+        displayMonitor.onConfigurationChange = { [weak self] in
+            self?.ownershipController.displayConfigurationChanged()
         }
         usbHubMonitor.onChange = { [weak self] isPresent in
             if isPresent {

@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class OwnershipController {
     private let keyboard: KeyboardControlling
+    private let displayHandoff: DisplayHandoffControlling?
 
     private(set) var snapshot: OwnershipSnapshot
     private(set) var desiredState: DesiredKeyboardState?
@@ -25,6 +26,7 @@ final class OwnershipController {
     private var automaticRetryTask: Task<Void, Never>?
     private var automaticRetryCount = 0
     private var kvmClaimIntent = false
+    private var displayHandoffActive = false
     private var usbHubClaimTask: Task<Void, Never>?
     private static let usbHubClaimDelayNanoseconds: UInt64 = 750_000_000
 
@@ -49,9 +51,14 @@ final class OwnershipController {
 
     var onKeyboardReconfigurationFailure: ((String) -> Void)?
 
-    init(keyboard: KeyboardControlling, behavior: AutomaticBehavior) {
+    init(
+        keyboard: KeyboardControlling,
+        behavior: AutomaticBehavior,
+        displayHandoff: DisplayHandoffControlling? = nil
+    ) {
         self.keyboard = keyboard
         self.behavior = behavior
+        self.displayHandoff = displayHandoff
         self.snapshot = OwnershipSnapshot(
             keyboardState: keyboard.state,
             ownershipReason: .none,
@@ -92,6 +99,9 @@ final class OwnershipController {
         failedDesiredState = nil
         lastError = nil
         publish()
+        if desiredState == .connected {
+            restoreDisplayAfterKeyboardClaimIfNeeded()
+        }
         if usesUSBHubAutomation && kvmClaimIntent {
             scheduleUSBHubClaim()
         } else if keyboard.state != .unknown {
@@ -141,6 +151,9 @@ final class OwnershipController {
             cancelAutomaticRetry()
             lastError = nil
             publish()
+            if desiredState == .connected {
+                restoreDisplayAfterKeyboardClaimIfNeeded()
+            }
             if kvmClaimIntent {
                 scheduleUSBHubClaim()
             } else {
@@ -192,6 +205,9 @@ final class OwnershipController {
         cancelAutomaticRetry()
         lastError = nil
         publish()
+        if desiredState == .connected {
+            restoreDisplayAfterKeyboardClaimIfNeeded()
+        }
         reconcile(force: true)
     }
 
@@ -204,6 +220,8 @@ final class OwnershipController {
             publish()
             return
         }
+
+        restoreDisplayAfterKeyboardClaimIfNeeded()
 
         if usesUSBHubAutomation {
             if usbHubPresent {
@@ -235,6 +253,7 @@ final class OwnershipController {
 
         GetKbdLog.event("monitor.connected")
         publish()
+        restoreDisplayAfterKeyboardClaimIfNeeded()
         reconcile(force: true)
     }
 
@@ -333,6 +352,7 @@ final class OwnershipController {
         failedDesiredState = nil
         lastError = nil
         publish()
+        restoreDisplayAfterKeyboardClaimIfNeeded()
 
         if kvmClaimIntent {
             scheduleUSBHubClaim()
@@ -350,6 +370,7 @@ final class OwnershipController {
         failedDesiredState = nil
         lastError = nil
         publish()
+        restoreDisplayAfterKeyboardClaimIfNeeded()
         reconcile(force: true)
     }
 
@@ -426,6 +447,9 @@ final class OwnershipController {
             }
             kvmClaimIntent = desiredState == .connected && keyboard.state != .connectedLocal
             publish()
+            if desiredState == .connected {
+                restoreDisplayAfterKeyboardClaimIfNeeded()
+            }
             if kvmClaimIntent {
                 scheduleUSBHubClaim()
             } else if !automaticClaimReady {
@@ -459,6 +483,7 @@ final class OwnershipController {
             } else {
                 desiredState = .connected
                 publish()
+                restoreDisplayAfterKeyboardClaimIfNeeded()
             }
             return
         }
@@ -473,6 +498,9 @@ final class OwnershipController {
                 desiredState = .connected
             }
             publish()
+            if desiredState == .connected {
+                restoreDisplayAfterKeyboardClaimIfNeeded()
+            }
             return
         }
 
@@ -482,6 +510,7 @@ final class OwnershipController {
                 ownershipReason = .existing
             }
             publish()
+            restoreDisplayAfterKeyboardClaimIfNeeded()
             return
         }
 
@@ -490,6 +519,18 @@ final class OwnershipController {
         failedDesiredState = nil
         publish()
         reconcile(force: true)
+    }
+
+    func displayConfigurationChanged() {
+        guard !isSleeping, !operationInProgress else { return }
+
+        if keyboard.state == .connectedLocal,
+           desiredState == .connected,
+           displayHandoff?.hasPendingKeyboardRelease == true {
+            restoreDisplayAfterKeyboardClaimIfNeeded()
+        } else if desiredState == .disconnected, displayHandoffActive {
+            displayHandoff?.prepareForKeyboardRelease()
+        }
     }
 
     func keyboardStateChanged() {
@@ -502,6 +543,10 @@ final class OwnershipController {
                 if ownershipReason == .none {
                     ownershipReason = .existing
                 }
+            }
+
+            if desiredState == .connected, !operationInProgress {
+                restoreDisplayAfterKeyboardClaimIfNeeded()
             }
         }
 
@@ -605,6 +650,10 @@ final class OwnershipController {
     }
 
     private func beginOperation(for target: DesiredKeyboardState) {
+        if target == .disconnected {
+            displayHandoffActive = true
+            displayHandoff?.prepareForKeyboardRelease()
+        }
         operationInProgress = true
         lastError = nil
         publish()
@@ -674,6 +723,10 @@ final class OwnershipController {
                 cancelUSBHubClaim()
             }
 
+            if target == .connected, desiredState == .connected {
+                restoreDisplayAfterKeyboardClaimIfNeeded()
+            }
+
             if target == .disconnected, desiredState == .disconnected {
                 ownershipReason = .none
             } else if target == .connected,
@@ -682,6 +735,15 @@ final class OwnershipController {
                 ownershipReason = .existing
             }
         } else {
+            if target == .disconnected {
+                operationInProgress = true
+                keyboard.refreshState()
+                operationInProgress = false
+            }
+            if target == .disconnected, keyboard.state == .connectedLocal {
+                displayHandoff?.restoreAfterKeyboardClaim()
+                displayHandoffActive = displayHandoff?.hasPendingKeyboardRelease ?? false
+            }
             failedDesiredState = target
             lastError = keyboard.lastError ?? "Bluetooth operation failed"
         }
@@ -878,6 +940,17 @@ final class OwnershipController {
     private func cancelUSBHubClaim() {
         usbHubClaimTask?.cancel()
         usbHubClaimTask = nil
+    }
+
+    private func restoreDisplayAfterKeyboardClaimIfNeeded() {
+        guard !operationInProgress,
+              !isSleeping,
+              keyboard.state == .connectedLocal else {
+            return
+        }
+
+        displayHandoff?.restoreAfterKeyboardClaim()
+        displayHandoffActive = displayHandoff?.hasPendingKeyboardRelease ?? false
     }
 
     private func publish() {

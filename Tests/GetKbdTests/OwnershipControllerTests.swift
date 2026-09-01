@@ -255,6 +255,65 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(keyboard.disconnectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
     }
+
+    func testDisplayIsMirroredBeforeReleaseAndRestoredAfterClaim() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.currentState = .connectedLocal
+        let display = FakeDisplayHandoffController()
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            behavior: .allEnabled,
+            displayHandoff: display
+        )
+
+        controller.start(monitorPresent: false)
+        display.events.removeAll()
+        controller.manualRelease()
+        await controller.waitForIdle()
+        controller.manualClaim()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(display.events, [.mirror, .restore])
+    }
+
+    func testFailedReleaseKeepsDisplayMirrored() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.currentState = .connectedLocal
+        keyboard.failNextDisconnect = true
+        let display = FakeDisplayHandoffController()
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            behavior: .allEnabled,
+            displayHandoff: display
+        )
+
+        controller.start(monitorPresent: false)
+        display.events.removeAll()
+        controller.manualRelease()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(display.events, [.mirror])
+    }
+
+    func testFailedReleaseRestoresDisplayIfKeyboardRemainsConnected() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.currentState = .connectedLocal
+        keyboard.failNextDisconnect = true
+        keyboard.keepConnectedOnDisconnectFailure = true
+        let display = FakeDisplayHandoffController()
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            behavior: .allEnabled,
+            displayHandoff: display
+        )
+
+        controller.start(monitorPresent: false)
+        display.events.removeAll()
+        controller.manualRelease()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(display.events, [.mirror, .restore])
+    }
 }
 
 @MainActor
@@ -266,6 +325,8 @@ private final class FakeKeyboardController: KeyboardControlling {
     var connectCallCount = 0
     var disconnectCallCount = 0
     var blockNextConnect = false
+    var failNextDisconnect = false
+    var keepConnectedOnDisconnectFailure = false
     private var blockedConnectContinuation: CheckedContinuation<Bool, Never>?
 
     var state: KeyboardConnectionState { currentState }
@@ -302,9 +363,14 @@ private final class FakeKeyboardController: KeyboardControlling {
         disconnectCallCount += 1
         currentState = .disconnecting
         notify()
-        currentState = .disconnected
+        let succeeds = !failNextDisconnect
+        failNextDisconnect = false
+        currentState = succeeds
+            ? .disconnected
+            : (keepConnectedOnDisconnectFailure ? .connectedLocal : .failed)
+        keepConnectedOnDisconnectFailure = false
         notify()
-        return true
+        return succeeds
     }
 
     func completeBlockedConnect(success: Bool) {
@@ -320,6 +386,25 @@ private final class FakeKeyboardController: KeyboardControlling {
 
     private func notify() {
         onStateChange?(currentState)
+    }
+}
+
+@MainActor
+private final class FakeDisplayHandoffController: DisplayHandoffControlling {
+    enum Event: Equatable {
+        case mirror
+        case restore
+    }
+
+    var events: [Event] = []
+    var hasPendingKeyboardRelease = false
+
+    func prepareForKeyboardRelease() {
+        events.append(.mirror)
+    }
+
+    func restoreAfterKeyboardClaim() {
+        events.append(.restore)
     }
 }
 
