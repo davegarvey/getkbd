@@ -1,6 +1,12 @@
 import Carbon
 import Foundation
 
+func normalizedBluetoothIdentifier(_ identifier: String) -> String {
+    identifier
+        .filter { $0 != ":" && $0 != "-" }
+        .lowercased()
+}
+
 enum KeyboardConnectionState: String, Codable, Equatable, Sendable {
     case disconnected
     case connecting
@@ -29,6 +35,7 @@ enum KeyboardConnectionState: String, Codable, Equatable, Sendable {
 
 enum OwnershipReason: String, Codable, Equatable, Sendable {
     case monitor
+    case usbHub
     case manual
     case existing
     case none
@@ -36,9 +43,41 @@ enum OwnershipReason: String, Codable, Equatable, Sendable {
     var menuTitle: String {
         switch self {
         case .monitor: return "Monitor"
+        case .usbHub: return "KVM USB hub"
         case .manual: return "Manual"
         case .existing: return "Existing connection"
         case .none: return "None"
+        }
+    }
+}
+
+enum AutomaticSource: String, Codable, Equatable, Sendable {
+    case monitor
+    case usbHub
+    case off
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        switch value {
+        case "monitor":
+            self = .monitor
+        case "usbHub", "kvmInput":
+            self = .usbHub
+        case "off":
+            self = .off
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: try decoder.singleValueContainer(),
+                debugDescription: "Unknown automatic source \(value)"
+            )
+        }
+    }
+
+    var menuTitle: String {
+        switch self {
+        case .monitor: return "Monitor connection"
+        case .usbHub: return "KVM USB hub connection"
+        case .off: return "Manual only"
         }
     }
 }
@@ -61,6 +100,22 @@ struct DisplayDescriptor: Codable, Equatable, Hashable, Identifiable, Sendable {
     let isBuiltIn: Bool
 
     var id: String { identifier }
+}
+
+struct USBHubDescriptor: Codable, Equatable, Hashable, Identifiable, Sendable {
+    let identifier: String
+    let name: String
+    let manufacturer: String
+    let vendorID: Int
+    let productID: Int
+
+    var id: String { identifier }
+
+    var menuTitle: String {
+        let vendor = manufacturer.isEmpty ? "USB" : manufacturer
+        let identifier = String(format: "%04X:%04X", vendorID, productID)
+        return "\(vendor) \(name) (\(identifier))"
+    }
 }
 
 struct ShortcutConfiguration: Codable, Equatable, Sendable {
@@ -148,29 +203,35 @@ struct ShortcutConfiguration: Codable, Equatable, Sendable {
 struct AppSettings: Codable, Equatable, Sendable {
     var selectedKeyboard: KeyboardDescriptor?
     var selectedDisplay: DisplayDescriptor?
+    var selectedUSBHub: USBHubDescriptor?
     var claimOnMonitorConnect: Bool
     var monitorTakesOwnershipFromManual: Bool
     var releaseOnMonitorDisconnect: Bool
     var releaseBeforeSleep: Bool
+    var automaticSource: AutomaticSource
     var shortcut: ShortcutConfiguration
     var launchAtLogin: Bool
 
     init(
         selectedKeyboard: KeyboardDescriptor?,
         selectedDisplay: DisplayDescriptor?,
+        selectedUSBHub: USBHubDescriptor?,
         claimOnMonitorConnect: Bool,
         monitorTakesOwnershipFromManual: Bool,
         releaseOnMonitorDisconnect: Bool,
         releaseBeforeSleep: Bool,
+        automaticSource: AutomaticSource,
         shortcut: ShortcutConfiguration,
         launchAtLogin: Bool
     ) {
         self.selectedKeyboard = selectedKeyboard
         self.selectedDisplay = selectedDisplay
+        self.selectedUSBHub = selectedUSBHub
         self.claimOnMonitorConnect = claimOnMonitorConnect
         self.monitorTakesOwnershipFromManual = monitorTakesOwnershipFromManual
         self.releaseOnMonitorDisconnect = releaseOnMonitorDisconnect
         self.releaseBeforeSleep = releaseBeforeSleep
+        self.automaticSource = automaticSource
         self.shortcut = shortcut
         self.launchAtLogin = launchAtLogin
     }
@@ -178,25 +239,31 @@ struct AppSettings: Codable, Equatable, Sendable {
     static let initial = AppSettings(
         selectedKeyboard: nil,
         selectedDisplay: nil,
+        selectedUSBHub: nil,
         claimOnMonitorConnect: true,
         monitorTakesOwnershipFromManual: false,
         releaseOnMonitorDisconnect: true,
         releaseBeforeSleep: true,
+        automaticSource: .monitor,
         shortcut: .default,
         launchAtLogin: true
     )
 
     var needsOnboarding: Bool {
-        selectedKeyboard == nil || selectedDisplay == nil
+        selectedKeyboard == nil ||
+            (automaticSource == .monitor && selectedDisplay == nil) ||
+            (automaticSource == .usbHub && (selectedDisplay == nil || selectedUSBHub == nil))
     }
 
     private enum CodingKeys: String, CodingKey {
         case selectedKeyboard
         case selectedDisplay
+        case selectedUSBHub
         case claimOnMonitorConnect
         case monitorTakesOwnershipFromManual
         case releaseOnMonitorDisconnect
         case releaseBeforeSleep
+        case automaticSource
         case shortcut
         case launchAtLogin
     }
@@ -206,6 +273,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         self.init(
             selectedKeyboard: try container.decodeIfPresent(KeyboardDescriptor.self, forKey: .selectedKeyboard),
             selectedDisplay: try container.decodeIfPresent(DisplayDescriptor.self, forKey: .selectedDisplay),
+            selectedUSBHub: try container.decodeIfPresent(USBHubDescriptor.self, forKey: .selectedUSBHub),
             claimOnMonitorConnect: try container.decode(Bool.self, forKey: .claimOnMonitorConnect),
             monitorTakesOwnershipFromManual: try container.decodeIfPresent(
                 Bool.self,
@@ -213,6 +281,7 @@ struct AppSettings: Codable, Equatable, Sendable {
             ) ?? false,
             releaseOnMonitorDisconnect: try container.decode(Bool.self, forKey: .releaseOnMonitorDisconnect),
             releaseBeforeSleep: try container.decode(Bool.self, forKey: .releaseBeforeSleep),
+            automaticSource: try container.decodeIfPresent(AutomaticSource.self, forKey: .automaticSource) ?? .monitor,
             shortcut: try container.decode(ShortcutConfiguration.self, forKey: .shortcut),
             launchAtLogin: try container.decode(Bool.self, forKey: .launchAtLogin)
         )
@@ -224,12 +293,14 @@ struct AutomaticBehavior: Equatable, Sendable {
     var monitorTakesOwnershipFromManual: Bool
     var releaseOnMonitorDisconnect: Bool
     var releaseBeforeSleep: Bool
+    var automaticSource: AutomaticSource = .monitor
 }
 
 struct OwnershipSnapshot: Equatable, Sendable {
     let keyboardState: KeyboardConnectionState
     let ownershipReason: OwnershipReason
     let monitorPresent: Bool
+    let usbHubPresent: Bool
     let isBusy: Bool
     let errorMessage: String?
 }

@@ -68,6 +68,11 @@ final class MenuBarController: NSObject {
             ? "Desk monitor: Not configured"
             : "Desk monitor: \(ownership.snapshot.monitorPresent ? "Connected" : "Disconnected")"
         addLabel(monitorTitle, to: menu)
+        let hubTitle = settingsStore.value.selectedUSBHub == nil
+            ? "KVM USB hub: Not configured"
+            : "KVM USB hub: \(ownership.snapshot.usbHubPresent ? "Connected" : "Disconnected")"
+        addLabel(hubTitle, to: menu)
+        addLabel("Switching method: \(settingsStore.value.automaticSource.menuTitle)", to: menu, secondary: true)
 
         menu.addItem(.separator())
 

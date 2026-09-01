@@ -20,6 +20,7 @@ let package = Package(
                 .linkedFramework("Carbon"),
                 .linkedFramework("ColorSync"),
                 .linkedFramework("IOBluetooth"),
+                .linkedFramework("IOKit"),
                 .linkedFramework("ServiceManagement")
             ]
         ),

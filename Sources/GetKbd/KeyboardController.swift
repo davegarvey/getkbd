@@ -9,7 +9,7 @@ protocol KeyboardControlling: AnyObject {
     var lastError: String? { get }
     var onStateChange: ((KeyboardConnectionState) -> Void)? { get set }
 
-    func availableKeyboards() -> [KeyboardDescriptor]
+    func availableKeyboards() async -> [KeyboardDescriptor]
     func stop()
     func refreshState()
     func connect() async -> Bool
@@ -51,6 +51,11 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     private static let connectionPollNanoseconds: UInt64 = 100_000_000
 
     private let operationQueue = DispatchQueue(label: "com.getkbd.bluetooth", qos: .userInitiated)
+    private let deviceLookupQueue = DispatchQueue(
+        label: "com.getkbd.bluetooth.lookup",
+        qos: .utility,
+        attributes: .concurrent
+    )
     private var stateValue: KeyboardConnectionState = .unknown
     private var observers: [NSObjectProtocol] = []
 
@@ -67,23 +72,14 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     init(configuredKeyboard: KeyboardDescriptor?) {
         self.configuredKeyboard = configuredKeyboard
         installObservers()
-        refreshState()
     }
 
-    func availableKeyboards() -> [KeyboardDescriptor] {
-        let devices = IOBluetoothDevice.pairedDevices() ?? []
-
-        return devices
-            .compactMap { $0 as? IOBluetoothDevice }
-            .compactMap { device in
-                guard let identifier = device.addressString else { return nil }
-                let name = device.name?.isEmpty == false ? device.name! : identifier
-                guard Self.looksLikeKeyboard(device: device, name: name) else { return nil }
-                return KeyboardDescriptor(identifier: identifier, name: name)
+    func availableKeyboards() async -> [KeyboardDescriptor] {
+        await withCheckedContinuation { continuation in
+            deviceLookupQueue.async {
+                continuation.resume(returning: Self.discoverKeyboards())
             }
-            .sorted { lhs, rhs in
-                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
+        }
     }
 
     func stop() {
@@ -92,21 +88,23 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func refreshState() {
-        guard let device = resolvedDevice() else {
+        guard let identifier = configuredKeyboard?.identifier,
+              let device = Self.device(identifier: identifier) else {
             updateState(.unknown)
             return
         }
 
-        updateState(device.isPaired() && device.isConnected() ? .connectedLocal : .disconnected)
+        updateState(device.device.isConnected() ? .connectedLocal : .disconnected)
     }
 
     func connect() async -> Bool {
-        guard let device = resolvedDevice() else {
+        guard let box = await resolvedDevice() else {
             fail("No paired keyboard is selected")
             return false
         }
+        let device = box.device
 
-        if device.isPaired() && device.isConnected() {
+        if await runBluetoothCheck({ device.isPaired() && device.isConnected() }) {
             lastError = nil
             updateState(.connectedLocal)
             return true
@@ -116,7 +114,6 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         updateState(.connecting)
         GetKbdLog.event("keyboard.claim.started", configuredKeyboard?.name ?? "")
 
-        let box = BluetoothDeviceBox(device: device)
         let removeResult = await runBluetoothCall { Self.removePairing(box.device) }
 
         guard let removeResult else {
@@ -125,7 +122,9 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        guard removeResult == kIOReturnSuccess, !device.isPaired() else {
+        let isPairedAfterRemoval = await runBluetoothCheck { device.isPaired() }
+        let isConnectedAfterRemoval = await runBluetoothCheck { device.isConnected() }
+        guard removeResult == kIOReturnSuccess, !isPairedAfterRemoval, !isConnectedAfterRemoval else {
             fail("macOS could not remove the old Bluetooth pairing")
             GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing removal failed")
             return false
@@ -144,7 +143,8 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        guard pairResult == kIOReturnSuccess, device.isPaired() else {
+        let isPairedAfterPairing = await runBluetoothCheck { device.isPaired() }
+        guard pairResult == kIOReturnSuccess, isPairedAfterPairing else {
             fail("The keyboard could not be paired with this Mac (IOReturn \(pairResult))")
             GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing failed")
             return false
@@ -166,7 +166,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        guard device.isPaired() else {
+        guard await runBluetoothCheck({ device.isPaired() }) else {
             fail("Bluetooth connected, but the keyboard pairing did not finish")
             GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing did not finish")
             return false
@@ -179,16 +179,16 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func disconnect() async -> Bool {
-        guard let device = resolvedDevice() else {
+        guard let box = await resolvedDevice() else {
             fail("No paired keyboard is selected")
             return false
         }
+        let device = box.device
 
         lastError = nil
         updateState(.disconnecting)
         GetKbdLog.event("keyboard.release.started", configuredKeyboard?.name ?? "")
 
-        let box = BluetoothDeviceBox(device: device)
         let returnCode = await runBluetoothCall { Self.removePairing(box.device) }
 
         guard let returnCode else {
@@ -197,7 +197,9 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        guard returnCode == kIOReturnSuccess, !device.isPaired() else {
+        let isPairedAfterRemoval = await runBluetoothCheck { device.isPaired() }
+        let isConnectedAfterRemoval = await runBluetoothCheck { device.isConnected() }
+        guard returnCode == kIOReturnSuccess, !isPairedAfterRemoval, !isConnectedAfterRemoval else {
             fail("macOS did not remove the keyboard pairing")
             GetKbdLog.error("keyboard.release.failed", lastError ?? "Unknown failure")
             return false
@@ -209,9 +211,28 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         return true
     }
 
-    private func resolvedDevice() -> IOBluetoothDevice? {
+    private func resolvedDevice() async -> BluetoothDeviceBox? {
         guard let identifier = configuredKeyboard?.identifier else { return nil }
-        return IOBluetoothDevice(addressString: identifier)
+        return Self.device(identifier: identifier)
+    }
+
+    nonisolated private static func device(identifier: String) -> BluetoothDeviceBox? {
+        guard let device = IOBluetoothDevice(addressString: identifier) else { return nil }
+        return BluetoothDeviceBox(device: device)
+    }
+
+    nonisolated private static func discoverKeyboards() -> [KeyboardDescriptor] {
+        (IOBluetoothDevice.pairedDevices() ?? [])
+            .compactMap { $0 as? IOBluetoothDevice }
+            .compactMap { device in
+                guard let identifier = device.addressString else { return nil }
+                let name = device.name?.isEmpty == false ? device.name! : identifier
+                guard Self.looksLikeKeyboard(device: device, name: name) else { return nil }
+                return KeyboardDescriptor(identifier: identifier, name: name)
+            }
+            .sorted { lhs, rhs in
+                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
     }
 
     private func installObservers() {
@@ -238,7 +259,9 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     private func bluetoothDeviceChanged(address: String?) {
-        guard address == configuredKeyboard?.identifier else {
+        guard let address,
+              let configuredIdentifier = configuredKeyboard?.identifier,
+              normalizedBluetoothIdentifier(address) == normalizedBluetoothIdentifier(configuredIdentifier) else {
             return
         }
 
@@ -269,15 +292,30 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             // stack may leave the accessory unavailable for the next host if the connection is
             // closed as a separate operation immediately afterward.
             let deadline = Date().addingTimeInterval(5)
-            while device.isPaired() && Date() < deadline {
+            while (device.isPaired() || device.isConnected()) && Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.1)
             }
 
-            return device.isPaired() ? kIOReturnError : kIOReturnSuccess
+            if device.isConnected() {
+                _ = device.closeConnection()
+                let disconnectDeadline = Date().addingTimeInterval(5)
+                while device.isConnected() && Date() < disconnectDeadline {
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+            }
+
+            return device.isPaired() || device.isConnected() ? kIOReturnError : kIOReturnSuccess
         }
 
         if device.isConnected() {
-            return device.closeConnection()
+            let returnCode = device.closeConnection()
+            guard returnCode == kIOReturnSuccess else { return returnCode }
+
+            let deadline = Date().addingTimeInterval(5)
+            while device.isConnected() && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            return device.isConnected() ? kIOReturnError : kIOReturnSuccess
         }
 
         return kIOReturnSuccess
@@ -319,14 +357,24 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         let deadline = Date().addingTimeInterval(10)
 
         while Date() < deadline {
-            if device.isConnected() == connected {
+            if await runBluetoothCheck({ device.isConnected() }) == connected {
                 return true
             }
 
             try? await Task.sleep(nanoseconds: Self.connectionPollNanoseconds)
         }
 
-        return device.isConnected() == connected
+        return await runBluetoothCheck({ device.isConnected() }) == connected
+    }
+
+    private func runBluetoothCheck(
+        _ operation: @escaping @Sendable () -> Bool
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            operationQueue.async {
+                continuation.resume(returning: operation())
+            }
+        }
     }
 
     private func runBluetoothCall(
@@ -346,7 +394,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         }
     }
 
-    private static func looksLikeKeyboard(device: IOBluetoothDevice, name: String) -> Bool {
+    nonisolated private static func looksLikeKeyboard(device: IOBluetoothDevice, name: String) -> Bool {
         let major = UInt32(device.deviceClassMajor)
         let minor = UInt32(device.deviceClassMinor)
         let peripheralMajor = UInt32(kBluetoothDeviceClassMajorPeripheral)

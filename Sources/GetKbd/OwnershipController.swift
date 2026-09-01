@@ -12,6 +12,7 @@ final class OwnershipController {
     private var behavior: AutomaticBehavior
     private var ownershipReason: OwnershipReason = .none
     private var monitorPresent = false
+    private var usbHubPresent = false
     private var operationInProgress = false
     private var failedDesiredState: DesiredKeyboardState?
     private var lastError: String?
@@ -23,6 +24,28 @@ final class OwnershipController {
     private var sleepOwnershipReason: OwnershipReason?
     private var automaticRetryTask: Task<Void, Never>?
     private var automaticRetryCount = 0
+    private var kvmClaimIntent = false
+    private var usbHubClaimTask: Task<Void, Never>?
+    private static let usbHubClaimDelayNanoseconds: UInt64 = 750_000_000
+
+    private var usesMonitorAutomation: Bool {
+        behavior.automaticSource == .monitor
+    }
+
+    private var usesUSBHubAutomation: Bool {
+        behavior.automaticSource == .usbHub
+    }
+
+    private var automaticClaimReady: Bool {
+        switch behavior.automaticSource {
+        case .monitor:
+            return monitorPresent && behavior.claimOnMonitorConnect
+        case .usbHub:
+            return monitorPresent && usbHubPresent
+        case .off:
+            return false
+        }
+    }
 
     var onKeyboardReconfigurationFailure: ((String) -> Void)?
 
@@ -33,6 +56,7 @@ final class OwnershipController {
             keyboardState: keyboard.state,
             ownershipReason: .none,
             monitorPresent: false,
+            usbHubPresent: false,
             isBusy: false,
             errorMessage: nil
         )
@@ -42,15 +66,25 @@ final class OwnershipController {
         }
     }
 
-    func start(monitorPresent: Bool) {
+    func start(monitorPresent: Bool, usbHubPresent: Bool = false) {
         self.monitorPresent = monitorPresent
+        self.usbHubPresent = usbHubPresent
+        kvmClaimIntent = false
         keyboard.refreshState()
 
-        if keyboard.state == .connectedLocal {
-            ownershipReason = monitorPresent && behavior.claimOnMonitorConnect ? .monitor : .existing
+        if usesUSBHubAutomation {
+            desiredState = automaticClaimReady ? .connected : .disconnected
+            if keyboard.state == .connectedLocal || desiredState == .connected {
+                ownershipReason = .usbHub
+            } else {
+                ownershipReason = .none
+            }
+            kvmClaimIntent = desiredState == .connected && keyboard.state != .connectedLocal
+        } else if keyboard.state == .connectedLocal {
+            ownershipReason = automaticClaimReady ? .monitor : .existing
             desiredState = .connected
         } else {
-            let shouldClaim = monitorPresent && behavior.claimOnMonitorConnect
+            let shouldClaim = automaticClaimReady
             ownershipReason = shouldClaim ? .monitor : .none
             desiredState = shouldClaim ? .connected : .disconnected
         }
@@ -58,12 +92,25 @@ final class OwnershipController {
         failedDesiredState = nil
         lastError = nil
         publish()
-        reconcile(force: desiredState == .connected)
+        if usesUSBHubAutomation && kvmClaimIntent {
+            scheduleUSBHubClaim()
+        } else if keyboard.state != .unknown {
+            reconcile(force: desiredState == .connected)
+        }
     }
 
-    func updateBehavior(_ behavior: AutomaticBehavior, monitorPresent: Bool) {
+    func updateBehavior(
+        _ behavior: AutomaticBehavior,
+        monitorPresent: Bool,
+        usbHubPresent: Bool = false
+    ) {
         self.behavior = behavior
         self.monitorPresent = monitorPresent
+        self.usbHubPresent = usbHubPresent
+        if behavior.automaticSource != .usbHub {
+            kvmClaimIntent = false
+            cancelUSBHubClaim()
+        }
 
         if isSleeping {
             publish()
@@ -71,8 +118,10 @@ final class OwnershipController {
         }
 
         if hasPendingKeyboardConfiguration {
-            desiredState = monitorPresent && behavior.claimOnMonitorConnect ? .connected : .disconnected
-            ownershipReason = desiredState == .connected ? .monitor : .none
+            desiredState = automaticClaimReady ? .connected : .disconnected
+            ownershipReason = desiredState == .connected
+                ? (usesUSBHubAutomation ? .usbHub : .monitor)
+                : .none
             failedDesiredState = nil
             lastError = nil
             publish()
@@ -82,8 +131,31 @@ final class OwnershipController {
             return
         }
 
+        if usesUSBHubAutomation {
+            keyboard.refreshState()
+            desiredState = automaticClaimReady ? .connected : .disconnected
+            ownershipReason = keyboard.state == .connectedLocal || desiredState == .connected ? .usbHub : .none
+            kvmClaimIntent = desiredState == .connected && keyboard.state != .connectedLocal
+            failedDesiredState = nil
+            automaticRetryCount = 0
+            cancelAutomaticRetry()
+            lastError = nil
+            publish()
+            if kvmClaimIntent {
+                scheduleUSBHubClaim()
+            } else {
+                reconcile(force: true)
+            }
+            return
+        }
+
         keyboard.refreshState()
+        if usesMonitorAutomation,
+           ownershipReason == .usbHub {
+            ownershipReason = .monitor
+        }
         if monitorPresent,
+           usesMonitorAutomation,
            behavior.claimOnMonitorConnect,
            behavior.monitorTakesOwnershipFromManual,
            ownershipReason == .manual {
@@ -91,19 +163,23 @@ final class OwnershipController {
         }
 
         if keyboard.state == .connectedLocal {
-            if !monitorPresent,
-               behavior.releaseOnMonitorDisconnect,
-               ownershipReason == .monitor {
+            if ownershipReason == .monitor,
+               usesMonitorAutomation,
+               !monitorPresent,
+               behavior.releaseOnMonitorDisconnect {
                 desiredState = .disconnected
             } else {
                 desiredState = .connected
-                if ownershipReason == .none {
+                if !usesMonitorAutomation,
+                   (ownershipReason == .monitor || ownershipReason == .usbHub) {
+                    ownershipReason = .existing
+                } else if ownershipReason == .none {
                     ownershipReason = .existing
                 }
             }
-        } else if monitorPresent && behavior.claimOnMonitorConnect {
+        } else if automaticClaimReady {
             desiredState = .connected
-            if ownershipReason == .none {
+            if ownershipReason == .none || ownershipReason == .usbHub {
                 ownershipReason = .monitor
             }
         } else {
@@ -129,7 +205,16 @@ final class OwnershipController {
             return
         }
 
-        guard behavior.claimOnMonitorConnect else {
+        if usesUSBHubAutomation {
+            if usbHubPresent {
+                requestUSBHubClaim()
+            } else {
+                publish()
+            }
+            return
+        }
+
+        guard usesMonitorAutomation, behavior.claimOnMonitorConnect else {
             publish()
             return
         }
@@ -157,15 +242,22 @@ final class OwnershipController {
         monitorPresent = false
         cancelAutomaticRetry()
         automaticRetryCount = 0
+        cancelUSBHubClaim()
 
-        guard behavior.releaseOnMonitorDisconnect,
-              ownershipReason == .monitor else {
+        let releasesMonitorOwnedKeyboard = usesMonitorAutomation && ownershipReason == .monitor
+        let releasesSelectedUSBKeyboard = usesUSBHubAutomation && keyboard.configuredKeyboard != nil
+        guard (usesUSBHubAutomation || behavior.releaseOnMonitorDisconnect),
+              (releasesMonitorOwnedKeyboard || releasesSelectedUSBKeyboard) else {
             publish()
             return
         }
 
         desiredState = .disconnected
         failedDesiredState = nil
+        kvmClaimIntent = false
+        if releasesSelectedUSBKeyboard {
+            ownershipReason = .usbHub
+        }
         GetKbdLog.event("monitor.disconnected")
 
         if keyboard.state == .disconnected && !operationInProgress {
@@ -176,9 +268,81 @@ final class OwnershipController {
         reconcile(force: true)
     }
 
+    func usbHubConnected() {
+        usbHubPresent = true
+        cancelAutomaticRetry()
+        automaticRetryCount = 0
+
+        guard !isSleeping else {
+            publish()
+            return
+        }
+
+        guard usesUSBHubAutomation else {
+            publish()
+            return
+        }
+
+        GetKbdLog.event("usb.hub.connected")
+        if monitorPresent {
+            requestUSBHubClaim()
+        } else {
+            publish()
+        }
+    }
+
+    func usbHubDisconnected() {
+        usbHubPresent = false
+        cancelUSBHubClaim()
+        cancelAutomaticRetry()
+        automaticRetryCount = 0
+
+        guard usesUSBHubAutomation else {
+            publish()
+            return
+        }
+
+        desiredState = .disconnected
+        failedDesiredState = nil
+        kvmClaimIntent = false
+        ownershipReason = .usbHub
+        lastError = nil
+        GetKbdLog.event("usb.hub.disconnected")
+
+        if keyboard.state == .disconnected && !operationInProgress {
+            ownershipReason = .none
+        }
+
+        publish()
+        reconcile(force: true)
+    }
+
+    private func requestUSBHubClaim() {
+        guard usesUSBHubAutomation,
+              monitorPresent,
+              usbHubPresent else {
+            return
+        }
+
+        keyboard.refreshState()
+        kvmClaimIntent = keyboard.state != .connectedLocal
+        cancelAutomaticRetry()
+        automaticRetryCount = 0
+        desiredState = .connected
+        ownershipReason = .usbHub
+        failedDesiredState = nil
+        lastError = nil
+        publish()
+
+        if kvmClaimIntent {
+            scheduleUSBHubClaim()
+        }
+    }
+
     func manualClaim() {
         guard !isSleeping else { return }
 
+        kvmClaimIntent = false
         cancelAutomaticRetry()
         automaticRetryCount = 0
         desiredState = .connected
@@ -190,6 +354,7 @@ final class OwnershipController {
     }
 
     func manualRelease() {
+        kvmClaimIntent = false
         cancelAutomaticRetry()
         automaticRetryCount = 0
         desiredState = .disconnected
@@ -214,6 +379,8 @@ final class OwnershipController {
             lastError = nil
         }
 
+        kvmClaimIntent = false
+        cancelUSBHubClaim()
         guard behavior.releaseBeforeSleep else { return }
 
         cancelAutomaticRetry()
@@ -235,13 +402,34 @@ final class OwnershipController {
 
         if hasPendingKeyboardConfiguration {
             sleepOwnershipReason = nil
-            desiredState = monitorPresent && behavior.claimOnMonitorConnect ? .connected : .disconnected
-            ownershipReason = desiredState == .connected ? .monitor : .none
+            desiredState = automaticClaimReady ? .connected : .disconnected
+            ownershipReason = desiredState == .connected
+                ? (usesUSBHubAutomation ? .usbHub : .monitor)
+                : .none
             failedDesiredState = nil
             lastError = nil
             publish()
             if !operationInProgress {
                 beginReconfiguration()
+            }
+            return
+        }
+
+        if usesUSBHubAutomation {
+            kvmClaimIntent = false
+            sleepOwnershipReason = nil
+            desiredState = automaticClaimReady ? .connected : .disconnected
+            if keyboard.state == .connectedLocal || desiredState == .connected {
+                ownershipReason = .usbHub
+            } else {
+                ownershipReason = .none
+            }
+            kvmClaimIntent = desiredState == .connected && keyboard.state != .connectedLocal
+            publish()
+            if kvmClaimIntent {
+                scheduleUSBHubClaim()
+            } else if !automaticClaimReady {
+                reconcile(force: true)
             }
             return
         }
@@ -253,14 +441,16 @@ final class OwnershipController {
             ownershipReason = reasonBeforeSleep
 
             if reasonBeforeSleep == .manual,
-               monitorPresent,
-               behavior.claimOnMonitorConnect,
+                monitorPresent,
+                usesMonitorAutomation,
+                behavior.claimOnMonitorConnect,
                behavior.monitorTakesOwnershipFromManual {
                 ownershipReason = .monitor
             }
 
             if ownershipReason == .monitor,
                !monitorPresent,
+               usesMonitorAutomation,
                behavior.releaseOnMonitorDisconnect {
                 desiredState = .disconnected
                 failedDesiredState = nil
@@ -275,7 +465,9 @@ final class OwnershipController {
 
         sleepOwnershipReason = nil
 
-        guard monitorPresent && behavior.claimOnMonitorConnect else {
+        guard usesMonitorAutomation,
+              monitorPresent,
+              behavior.claimOnMonitorConnect else {
             if keyboard.state == .connectedLocal && ownershipReason == .none {
                 ownershipReason = .existing
                 desiredState = .connected
@@ -315,16 +507,37 @@ final class OwnershipController {
 
         publish()
 
+        if keyboard.state == .connectedLocal,
+           desiredState == .disconnected,
+           ownershipReason == .usbHub,
+           usesUSBHubAutomation,
+           (!monitorPresent || !usbHubPresent),
+           !operationInProgress {
+            reconcile(force: true)
+        }
+
         if (keyboard.state == .disconnected || keyboard.state == .failed),
            !operationInProgress {
             if desiredState == .connected,
                ownershipReason == .monitor,
                monitorPresent {
                 scheduleAutomaticRetry(for: .connected)
+            } else if desiredState == .connected,
+                      ownershipReason == .usbHub,
+                      usesUSBHubAutomation,
+                      monitorPresent,
+                      usbHubPresent,
+                      kvmClaimIntent {
+                scheduleAutomaticRetry(for: .connected)
             } else if desiredState == .disconnected,
                       ownershipReason == .monitor,
                       !monitorPresent,
                       behavior.releaseOnMonitorDisconnect {
+                scheduleAutomaticRetry(for: .disconnected)
+            } else if desiredState == .disconnected,
+                      ownershipReason == .usbHub,
+                      usesUSBHubAutomation,
+                      (!monitorPresent || !usbHubPresent) {
                 scheduleAutomaticRetry(for: .disconnected)
             }
         }
@@ -336,14 +549,17 @@ final class OwnershipController {
         }
 
         self.monitorPresent = monitorPresent
+        kvmClaimIntent = false
         if !hasPendingKeyboardConfiguration {
             originalOwnershipReason = ownershipReason
             reconfigurationReleaseAttempted = false
         }
         pendingKeyboard = descriptor
         hasPendingKeyboardConfiguration = true
-        desiredState = monitorPresent && behavior.claimOnMonitorConnect && !isSleeping ? .connected : .disconnected
-        ownershipReason = desiredState == .connected ? .monitor : .none
+        desiredState = !isSleeping && automaticClaimReady ? .connected : .disconnected
+        ownershipReason = desiredState == .connected
+            ? (usesUSBHubAutomation ? .usbHub : .monitor)
+            : .none
         failedDesiredState = nil
         lastError = nil
         cancelAutomaticRetry()
@@ -356,7 +572,7 @@ final class OwnershipController {
     }
 
     func waitForIdle() async {
-        while operationInProgress {
+        while operationInProgress || usbHubClaimTask != nil {
             await Task.yield()
         }
     }
@@ -453,6 +669,11 @@ final class OwnershipController {
             failedDesiredState = nil
             lastError = nil
 
+            if target == .connected, ownershipReason == .usbHub {
+                kvmClaimIntent = false
+                cancelUSBHubClaim()
+            }
+
             if target == .disconnected, desiredState == .disconnected {
                 ownershipReason = .none
             } else if target == .connected,
@@ -471,8 +692,10 @@ final class OwnershipController {
             failedDesiredState = nil
             reconcile(force: true)
         } else if !succeeded,
-                  ((target == .connected && ownershipReason == .monitor && monitorPresent) ||
-                   (target == .disconnected && ownershipReason == .monitor && !monitorPresent && behavior.releaseOnMonitorDisconnect)) {
+                  ((target == .connected && ownershipReason == .monitor && usesMonitorAutomation && monitorPresent) ||
+                   (target == .connected && ownershipReason == .usbHub && usesUSBHubAutomation && automaticClaimReady && kvmClaimIntent) ||
+                   (target == .disconnected && ownershipReason == .monitor && usesMonitorAutomation && !monitorPresent && behavior.releaseOnMonitorDisconnect) ||
+                   (target == .disconnected && ownershipReason == .usbHub && usesUSBHubAutomation && !automaticClaimReady)) {
             scheduleAutomaticRetry(for: target)
         }
     }
@@ -507,11 +730,13 @@ final class OwnershipController {
         keyboard.refreshState()
 
         if keyboard.state == .connectedLocal {
+            desiredState = automaticClaimReady ? .connected : .disconnected
+            ownershipReason = usesUSBHubAutomation
+                ? .usbHub
+                : (automaticClaimReady ? .monitor : .existing)
+        } else if automaticClaimReady {
             desiredState = .connected
-            ownershipReason = monitorPresent && behavior.claimOnMonitorConnect ? .monitor : .existing
-        } else if monitorPresent && behavior.claimOnMonitorConnect {
-            desiredState = .connected
-            ownershipReason = .monitor
+            ownershipReason = usesUSBHubAutomation ? .usbHub : .monitor
         } else {
             desiredState = .disconnected
             ownershipReason = .none
@@ -532,8 +757,13 @@ final class OwnershipController {
 
         if keyboard.state == .connectedLocal {
             if oldReason == .monitor,
+               usesMonitorAutomation,
                !monitorPresent,
                behavior.releaseOnMonitorDisconnect {
+                desiredState = .disconnected
+            } else if oldReason == .usbHub,
+                      usesUSBHubAutomation,
+                      !automaticClaimReady {
                 desiredState = .disconnected
             } else {
                 desiredState = .connected
@@ -550,8 +780,14 @@ final class OwnershipController {
 
         if desiredState == .disconnected,
            ownershipReason == .monitor,
+           usesMonitorAutomation,
            !monitorPresent,
            behavior.releaseOnMonitorDisconnect {
+            scheduleAutomaticRetry(for: .disconnected)
+        } else if desiredState == .disconnected,
+                  ownershipReason == .usbHub,
+                  usesUSBHubAutomation,
+                  !automaticClaimReady {
             scheduleAutomaticRetry(for: .disconnected)
         }
     }
@@ -574,16 +810,30 @@ final class OwnershipController {
 
             switch target {
             case .connected:
-                guard self.monitorPresent,
-                      self.behavior.claimOnMonitorConnect,
-                      self.ownershipReason == .monitor,
-                      self.desiredState == .connected else {
-                    return
+                if self.ownershipReason == .monitor {
+                    guard self.usesMonitorAutomation,
+                          self.monitorPresent,
+                          self.behavior.claimOnMonitorConnect,
+                          self.desiredState == .connected else {
+                        return
+                    }
+                } else {
+                    guard self.ownershipReason == .usbHub,
+                          self.usesUSBHubAutomation,
+                          self.automaticClaimReady,
+                          self.kvmClaimIntent,
+                          self.desiredState == .connected else {
+                        return
+                    }
                 }
             case .disconnected:
-                guard !self.monitorPresent,
-                      self.behavior.releaseOnMonitorDisconnect,
-                      self.ownershipReason == .monitor,
+                let releasesMonitorOwnedKeyboard = self.usesMonitorAutomation && self.ownershipReason == .monitor
+                let releasesSelectedUSBKeyboard = self.usesUSBHubAutomation &&
+                    self.ownershipReason == .usbHub &&
+                    self.keyboard.configuredKeyboard != nil
+                guard (!self.monitorPresent || (self.usesUSBHubAutomation && !self.usbHubPresent)),
+                      (self.usesUSBHubAutomation || self.behavior.releaseOnMonitorDisconnect),
+                      releasesMonitorOwnedKeyboard || releasesSelectedUSBKeyboard,
                       self.desiredState == .disconnected else {
                     return
                 }
@@ -603,11 +853,39 @@ final class OwnershipController {
         automaticRetryTask = nil
     }
 
+    private func scheduleUSBHubClaim() {
+        guard usbHubClaimTask == nil else { return }
+
+        usbHubClaimTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.usbHubClaimDelayNanoseconds)
+            guard !Task.isCancelled else { return }
+
+            guard let self else { return }
+            self.usbHubClaimTask = nil
+            guard self.usesUSBHubAutomation,
+                  self.automaticClaimReady,
+                  self.kvmClaimIntent,
+                  self.desiredState == .connected,
+                  !self.operationInProgress,
+                  !self.isSleeping else {
+                return
+            }
+
+            self.reconcile(force: true)
+        }
+    }
+
+    private func cancelUSBHubClaim() {
+        usbHubClaimTask?.cancel()
+        usbHubClaimTask = nil
+    }
+
     private func publish() {
         snapshot = OwnershipSnapshot(
             keyboardState: keyboard.state,
             ownershipReason: ownershipReason,
             monitorPresent: monitorPresent,
+            usbHubPresent: usbHubPresent,
             isBusy: operationInProgress,
             errorMessage: lastError
         )

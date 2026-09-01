@@ -100,6 +100,115 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(controller.snapshot.ownershipReason, .none)
     }
 
+    func testUSBHubSourceIgnoresMonitorAndClaimsOnHubConnection() async {
+        let keyboard = FakeKeyboardController()
+        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
+
+        controller.start(monitorPresent: true)
+        controller.monitorConnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 0)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+
+        controller.usbHubConnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .usbHub)
+    }
+
+    func testUSBHubOwnedKeyboardReleasesWhenMonitorDisconnects() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.configuredKeyboard = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
+        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
+
+        controller.start(monitorPresent: true)
+        controller.usbHubConnected()
+        await controller.waitForIdle()
+
+        controller.monitorDisconnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+    }
+
+    func testUSBHubDisconnectReleasesSelectedExistingKeyboard() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.configuredKeyboard = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
+        keyboard.currentState = .connectedLocal
+        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await controller.waitForIdle()
+        controller.usbHubDisconnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+    }
+
+    func testUSBHubDisconnectDoesNotReleaseUnconfiguredKeyboard() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.currentState = .connectedLocal
+        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await controller.waitForIdle()
+        controller.usbHubDisconnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 0)
+        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+    }
+
+    func testUSBHubSourceReleasesKeyboardLocally() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.configuredKeyboard = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
+        keyboard.currentState = .connectedLocal
+        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await controller.waitForIdle()
+        controller.usbHubDisconnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+    }
+
+    func testChangingFromMonitorToKvmReleasesMonitorOwnership() async {
+        let keyboard = FakeKeyboardController()
+        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
+
+        controller.start(monitorPresent: true)
+        await controller.waitForIdle()
+        controller.updateBehavior(.usbHub, monitorPresent: true)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+    }
+
+    func testChangingFromKvmToMonitorWithNoMonitorReleasesKeyboard() async {
+        let keyboard = FakeKeyboardController()
+        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await controller.waitForIdle()
+        controller.updateBehavior(.allEnabled, monitorPresent: false, usbHubPresent: false)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+    }
+
     func testSleepReleasesManualOwnership() async {
         let keyboard = FakeKeyboardController()
         let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
@@ -161,7 +270,7 @@ private final class FakeKeyboardController: KeyboardControlling {
 
     var state: KeyboardConnectionState { currentState }
 
-    func availableKeyboards() -> [KeyboardDescriptor] { [] }
+    func availableKeyboards() async -> [KeyboardDescriptor] { [] }
 
     func stop() {}
 
@@ -220,5 +329,13 @@ private extension AutomaticBehavior {
         monitorTakesOwnershipFromManual: false,
         releaseOnMonitorDisconnect: true,
         releaseBeforeSleep: true
+    )
+
+    static let usbHub = AutomaticBehavior(
+        claimOnMonitorConnect: true,
+        monitorTakesOwnershipFromManual: false,
+        releaseOnMonitorDisconnect: true,
+        releaseBeforeSleep: true,
+        automaticSource: .usbHub
     )
 }
