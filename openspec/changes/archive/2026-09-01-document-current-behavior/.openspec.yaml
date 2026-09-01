@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-01
+goal: Bring the main OpenSpec specifications in line with the implemented macOS
+  keyboard handoff app
