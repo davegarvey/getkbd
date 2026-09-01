@@ -8,6 +8,7 @@ final class MenuBarController: NSObject {
     private let ownership: OwnershipController
     private let displayMonitor: DisplayMonitor
     private let settingsStore: SettingsStore
+    private let peer: PeerVerificationController
     private let showSettings: () -> Void
     private let quit: () -> Void
     private var shortcutAvailable = true
@@ -16,12 +17,14 @@ final class MenuBarController: NSObject {
         ownership: OwnershipController,
         displayMonitor: DisplayMonitor,
         settingsStore: SettingsStore,
+        peer: PeerVerificationController,
         showSettings: @escaping () -> Void,
         quit: @escaping () -> Void
     ) {
         self.ownership = ownership
         self.displayMonitor = displayMonitor
         self.settingsStore = settingsStore
+        self.peer = peer
         self.showSettings = showSettings
         self.quit = quit
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -60,8 +63,23 @@ final class MenuBarController: NSObject {
         addLabel("Keyboard: \(keyboardName)", to: menu)
         addLabel(ownership.snapshot.keyboardState.menuTitle, to: menu)
         addLabel("Ownership: \(ownership.snapshot.ownershipReason.menuTitle)", to: menu, secondary: true)
+
+        let setupStatus = Self.setupStatus(for: settingsStore.value, peer: peer)
+        addLabel("Setup: \(setupStatus)", to: menu, secondary: setupStatus == "Ready")
+        if settingsStore.value.automaticSource == .usbHub, peer.isPaired {
+            addLabel(peer.peerDetail, to: menu, secondary: true)
+            addLabel("Verification: \(peer.verificationTitle)", to: menu, secondary: true)
+        }
+
+        if ownership.snapshot.displayHandoffState != .idle,
+           ownership.snapshot.displayHandoffState != .restored {
+            addLabel(ownership.snapshot.displayHandoffState.menuTitle, to: menu, secondary: true)
+        }
         if let errorMessage = ownership.snapshot.errorMessage {
             addLabel(errorMessage, to: menu, secondary: true)
+        }
+        if let displayError = ownership.snapshot.displayHandoffError {
+            addLabel(displayError, to: menu, secondary: true)
         }
 
         let monitorTitle = displayMonitor.configuredDisplayIdentifier == nil
@@ -73,8 +91,24 @@ final class MenuBarController: NSObject {
             : "KVM USB hub: \(ownership.snapshot.usbHubPresent ? "Connected" : "Disconnected")"
         addLabel(hubTitle, to: menu)
         addLabel("Switching method: \(settingsStore.value.automaticSource.menuTitle)", to: menu, secondary: true)
+        if settingsStore.value.launchAtLogin {
+            let loginStatus = LoginItemController.statusDescription()
+            if loginStatus != "Enabled" {
+                addLabel("Launch at login: \(loginStatus)", to: menu, secondary: true)
+            }
+        }
 
         menu.addItem(.separator())
+
+        if ownership.snapshot.displayHandoffState == .attentionRequired {
+            let restoreItem = NSMenuItem(
+                title: "Restore Display Layout",
+                action: #selector(retryDisplayLayout),
+                keyEquivalent: ""
+            )
+            restoreItem.target = self
+            menu.addItem(restoreItem)
+        }
 
         let shortcut = settingsStore.value.shortcut
         let getItem = NSMenuItem(
@@ -95,6 +129,17 @@ final class MenuBarController: NSObject {
         releaseItem.target = self
         releaseItem.isEnabled = settingsStore.value.selectedKeyboard != nil && !ownership.snapshot.isBusy
         menu.addItem(releaseItem)
+
+        if ownership.snapshot.keyboardState == .failed {
+            let retryItem = NSMenuItem(
+                title: ownership.desiredState == .disconnected ? "Retry Release" : "Retry Get Keyboard",
+                action: #selector(retryKeyboard),
+                keyEquivalent: ""
+            )
+            retryItem.target = self
+            retryItem.isEnabled = settingsStore.value.selectedKeyboard != nil
+            menu.addItem(retryItem)
+        }
 
         menu.addItem(.separator())
 
@@ -147,7 +192,27 @@ final class MenuBarController: NSObject {
             symbolName = "keyboard.fill"
         }
 
-        return NSImage(systemSymbolName: symbolName, accessibilityDescription: "Keyboard")
+        return NSImage(systemSymbolName: symbolName, accessibilityDescription: state.menuTitle)
+    }
+
+    private static func setupStatus(
+        for settings: AppSettings,
+        peer: PeerVerificationController
+    ) -> String {
+        guard settings.selectedKeyboard != nil else { return "Needs setup" }
+
+        switch settings.automaticSource {
+        case .monitor:
+            return settings.selectedDisplay == nil ? "Needs setup" : "Ready"
+        case .usbHub:
+            guard settings.selectedDisplay != nil,
+                  settings.selectedUSBHub != nil else { return "Needs setup" }
+            return peer.verificationStatus == .verified && peer.kvmTestStatus == .passed
+                ? "Ready"
+                : "KVM test not verified"
+        case .off:
+            return "Ready"
+        }
     }
 
     private static func cocoaModifiers(for shortcut: ShortcutConfiguration) -> NSEvent.ModifierFlags {
@@ -165,6 +230,18 @@ final class MenuBarController: NSObject {
 
     @objc private func releaseKeyboard() {
         ownership.manualRelease()
+    }
+
+    @objc private func retryKeyboard() {
+        if ownership.desiredState == .disconnected {
+            ownership.manualRelease()
+        } else {
+            ownership.manualClaim()
+        }
+    }
+
+    @objc private func retryDisplayLayout() {
+        ownership.retryDisplayHandoff()
     }
 
     @objc private func openSettings() {

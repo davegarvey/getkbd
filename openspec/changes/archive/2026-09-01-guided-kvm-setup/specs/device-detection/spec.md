@@ -1,64 +1,6 @@
 # device-detection Specification
 
-## Purpose
-
-Define how getkbd discovers paired keyboards and identifies the selected
-external display and physical KVM USB hub on the local Mac.
-
-## Requirements
-
-### Requirement: Discover paired Bluetooth keyboards
-
-The system SHALL list locally paired Bluetooth devices that identify as a
-keyboard by Bluetooth class or by a name containing "keyboard".
-
-#### Scenario: Paired keyboard is available
-
-- **WHEN** the settings window requests the keyboard list
-- **THEN** getkbd SHALL return keyboard descriptors containing a stable device
-  identifier and display name, sorted case-insensitively by name
-
-#### Scenario: Non-keyboard device is paired
-
-- **WHEN** a paired Bluetooth device is neither keyboard-class nor named as a
-  keyboard
-- **THEN** getkbd SHALL omit it from the selectable keyboard list
-
-#### Scenario: Keyboard has no usable name
-
-- **WHEN** a paired keyboard has an empty name
-- **THEN** getkbd SHALL use its Bluetooth identifier as the display name
-
-### Requirement: Detect the configured external display
-
-The system SHALL determine whether the configured display is currently present
-among the local macOS screens and SHALL exclude built-in displays from the
-selectable desk-monitor list.
-
-#### Scenario: External display is selected
-
-- **WHEN** the configured external display appears in the current screen list
-- **THEN** the display condition SHALL be present and getkbd SHALL notify the
-  ownership controller of a monitor connection
-
-#### Scenario: Configured display disappears
-
-- **WHEN** the configured external display is no longer in the current screen
-  list
-- **THEN** the display condition SHALL be absent and getkbd SHALL notify the
-  ownership controller of a monitor disconnection
-
-#### Scenario: Display changes settle
-
-- **WHEN** macOS emits screen or display-reconfiguration events in quick
-  succession
-- **THEN** getkbd SHALL debounce evaluation using the configured interval,
-  which defaults to 1.5 seconds, before publishing a changed condition
-
-#### Scenario: Built-in display is listed
-
-- **WHEN** getkbd populates the desk-monitor selector
-- **THEN** built-in displays SHALL not be offered as desk-monitor choices
+## MODIFIED Requirements
 
 ### Requirement: Detect physical USB hubs for KVM switching
 
@@ -135,6 +77,8 @@ handling.
 - **THEN** getkbd SHALL cancel automatic identification and instruct the user to
   select the KVM hub manually
 
+## ADDED Requirements
+
 ### Requirement: Identify the selected hub interactively
 
 The system SHALL support local hub identification and SHALL use paired before and
@@ -165,15 +109,3 @@ after observations to verify the result when both Macs are available.
   either Mac
 - **THEN** getkbd SHALL report that no detectable USB signal was found and SHALL
   offer manual switching or manual hub selection
-
-#### Scenario: Selected hub is identified interactively
-
-- **WHEN** the user starts KVM hub identification and exactly one hub identifier
-  changes
-- **THEN** getkbd SHALL select that changed hub and report the detected hub
-
-#### Scenario: Several hubs change during identification
-
-- **WHEN** more than one hub identifier changes during identification
-- **THEN** getkbd SHALL cancel automatic identification and instruct the user to
-  select the KVM hub manually

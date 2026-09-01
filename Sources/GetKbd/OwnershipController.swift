@@ -38,6 +38,17 @@ final class OwnershipController {
         behavior.automaticSource == .usbHub
     }
 
+    private var localDisplayIsActive: Bool {
+        switch behavior.automaticSource {
+        case .monitor:
+            return monitorPresent
+        case .usbHub:
+            return monitorPresent && usbHubPresent
+        case .off:
+            return false
+        }
+    }
+
     private var automaticClaimReady: Bool {
         switch behavior.automaticSource {
         case .monitor:
@@ -67,6 +78,10 @@ final class OwnershipController {
             isBusy: false,
             errorMessage: nil
         )
+
+        displayHandoff?.onHandoffStateChange = { [weak self] in
+            self?.publish()
+        }
 
         keyboard.onStateChange = { [weak self] _ in
             self?.keyboardStateChanged()
@@ -99,6 +114,9 @@ final class OwnershipController {
         failedDesiredState = nil
         lastError = nil
         publish()
+        if keyboard.state != .connectedLocal {
+            restoreDisplayForLocalUseIfNeeded()
+        }
         if desiredState == .connected {
             restoreDisplayAfterKeyboardClaimIfNeeded()
         }
@@ -152,7 +170,7 @@ final class OwnershipController {
             lastError = nil
             publish()
             if desiredState == .connected {
-                restoreDisplayAfterKeyboardClaimIfNeeded()
+                restoreDisplayForLocalUseIfNeeded()
             }
             if kvmClaimIntent {
                 scheduleUSBHubClaim()
@@ -205,8 +223,10 @@ final class OwnershipController {
         cancelAutomaticRetry()
         lastError = nil
         publish()
-        if desiredState == .connected {
+        if keyboard.state == .connectedLocal {
             restoreDisplayAfterKeyboardClaimIfNeeded()
+        } else {
+            restoreDisplayForLocalUseIfNeeded()
         }
         reconcile(force: true)
     }
@@ -221,7 +241,11 @@ final class OwnershipController {
             return
         }
 
-        restoreDisplayAfterKeyboardClaimIfNeeded()
+        if usesMonitorAutomation {
+            restoreDisplayForLocalUseIfNeeded()
+        } else {
+            restoreDisplayAfterKeyboardClaimIfNeeded()
+        }
 
         if usesUSBHubAutomation {
             if usbHubPresent {
@@ -352,7 +376,7 @@ final class OwnershipController {
         failedDesiredState = nil
         lastError = nil
         publish()
-        restoreDisplayAfterKeyboardClaimIfNeeded()
+        restoreDisplayForLocalUseIfNeeded()
 
         if kvmClaimIntent {
             scheduleUSBHubClaim()
@@ -448,7 +472,7 @@ final class OwnershipController {
             kvmClaimIntent = desiredState == .connected && keyboard.state != .connectedLocal
             publish()
             if desiredState == .connected {
-                restoreDisplayAfterKeyboardClaimIfNeeded()
+                restoreDisplayForLocalUseIfNeeded()
             }
             if kvmClaimIntent {
                 scheduleUSBHubClaim()
@@ -518,6 +542,7 @@ final class OwnershipController {
         ownershipReason = .monitor
         failedDesiredState = nil
         publish()
+        restoreDisplayForLocalUseIfNeeded()
         reconcile(force: true)
     }
 
@@ -531,6 +556,19 @@ final class OwnershipController {
         } else if desiredState == .disconnected, displayHandoffActive {
             displayHandoff?.prepareForKeyboardRelease()
         }
+    }
+
+    func retryDisplayHandoff() {
+        guard !isSleeping else { return }
+
+        if keyboard.state == .connectedLocal {
+            restoreDisplayAfterKeyboardClaimIfNeeded()
+        } else if desiredState == .disconnected {
+            displayHandoff?.prepareForKeyboardRelease()
+        } else {
+            restoreDisplayForLocalUseIfNeeded()
+        }
+        publish()
     }
 
     func keyboardStateChanged() {
@@ -960,7 +998,9 @@ final class OwnershipController {
             monitorPresent: monitorPresent,
             usbHubPresent: usbHubPresent,
             isBusy: operationInProgress,
-            errorMessage: lastError
+            errorMessage: lastError,
+            displayHandoffState: displayHandoff?.handoffState ?? .idle,
+            displayHandoffError: displayHandoff?.handoffError
         )
         onChange?(snapshot)
     }
