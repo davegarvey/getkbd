@@ -276,6 +276,26 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(display.events, [.mirror, .restore])
     }
 
+    func testDisplayHandoffStateIsPublished() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.currentState = .connectedLocal
+        let display = FakeDisplayHandoffController()
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            behavior: .allEnabled,
+            displayHandoff: display
+        )
+
+        controller.start(monitorPresent: false)
+        controller.manualRelease()
+        await controller.waitForIdle()
+        XCTAssertEqual(controller.snapshot.displayHandoffState, .protected)
+
+        controller.manualClaim()
+        await controller.waitForIdle()
+        XCTAssertEqual(controller.snapshot.displayHandoffState, .restored)
+    }
+
     func testFailedReleaseKeepsDisplayMirrored() async {
         let keyboard = FakeKeyboardController()
         keyboard.currentState = .connectedLocal
@@ -398,13 +418,22 @@ private final class FakeDisplayHandoffController: DisplayHandoffControlling {
 
     var events: [Event] = []
     var hasPendingKeyboardRelease = false
+    var handoffState: DisplayHandoffState = .idle
+    var handoffError: String?
+    var onHandoffStateChange: (() -> Void)?
 
     func prepareForKeyboardRelease() {
         events.append(.mirror)
+        handoffState = .protected
+        hasPendingKeyboardRelease = true
+        onHandoffStateChange?()
     }
 
     func restoreAfterKeyboardClaim() {
         events.append(.restore)
+        handoffState = .restored
+        hasPendingKeyboardRelease = false
+        onHandoffStateChange?()
     }
 }
 

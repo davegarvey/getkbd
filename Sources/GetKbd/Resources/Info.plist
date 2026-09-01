@@ -22,5 +22,11 @@
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>getkbd needs Bluetooth access to move the shared keyboard.</string>
-</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>getkbd uses your local network only to verify the other Mac during setup.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_getkbd._tcp</string>
+	</array>
+ </dict>
 </plist>

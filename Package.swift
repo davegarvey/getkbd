@@ -21,6 +21,7 @@ let package = Package(
                 .linkedFramework("ColorSync"),
                 .linkedFramework("IOBluetooth"),
                 .linkedFramework("IOKit"),
+                .linkedFramework("Network"),
                 .linkedFramework("ServiceManagement")
             ]
         ),

@@ -80,6 +80,112 @@ enum AutomaticSource: String, Codable, Equatable, Sendable {
         case .off: return "Manual only"
         }
     }
+
+    var setupTitle: String {
+        switch self {
+        case .monitor:
+            return "Unplug and reconnect the display cable"
+        case .usbHub:
+            return "Both Macs stay connected; change the monitor input"
+        case .off:
+            return "Switch manually"
+        }
+    }
+}
+
+enum DisplayHandoffState: String, Codable, Equatable, Sendable {
+    case idle
+    case preparing
+    case protected
+    case restoring
+    case restored
+    case attentionRequired
+
+    var menuTitle: String {
+        switch self {
+        case .idle:
+            return "No display handoff in progress"
+        case .preparing:
+            return "Preparing shared display..."
+        case .protected:
+            return "Shared display protected"
+        case .restoring:
+            return "Restoring display layout..."
+        case .restored:
+            return "Display layout restored"
+        case .attentionRequired:
+            return "Display layout needs attention"
+        }
+    }
+}
+
+enum PeerVerificationStatus: String, Codable, Equatable, Sendable {
+    case unverified
+    case listening
+    case verified
+    case unsafe
+    case ambiguous
+    case noSignal
+    case unavailable
+
+    var menuTitle: String {
+        switch self {
+        case .unverified: return "Not verified"
+        case .listening: return "Listening for input change..."
+        case .verified: return "Input switch verified"
+        case .unsafe: return "Unsafe: both Macs see the hub"
+        case .ambiguous: return "Ambiguous hub change"
+        case .noSignal: return "No USB signal detected"
+        case .unavailable: return "Peer unavailable"
+        }
+    }
+}
+
+enum PeerConnectionState: String, Equatable, Sendable {
+    case unavailable
+    case discovered
+    case connecting
+    case awaitingConfirmation
+    case paired
+    case stale
+}
+
+enum KVMTestStatus: String, Codable, Equatable, Sendable {
+    case notStarted
+    case waitingForFirstSwitch
+    case waitingForReturn
+    case passed
+    case skipped
+    case failed
+
+    var menuTitle: String {
+        switch self {
+        case .notStarted: return "Not tested"
+        case .waitingForFirstSwitch: return "Waiting for first switch..."
+        case .waitingForReturn: return "Switch back to finish the test"
+        case .passed: return "Handoff test passed"
+        case .skipped: return "Handoff test not verified"
+        case .failed: return "Handoff test failed"
+        }
+    }
+}
+
+struct PeerPreferences: Codable, Equatable, Sendable {
+    var instanceID: String
+    var pairedPeerID: String?
+    var pairedPeerName: String?
+    var verificationStatus: PeerVerificationStatus
+    var kvmTestStatus: KVMTestStatus
+
+    static func initial(instanceID: String = UUID().uuidString) -> PeerPreferences {
+        PeerPreferences(
+            instanceID: instanceID,
+            pairedPeerID: nil,
+            pairedPeerName: nil,
+            verificationStatus: .unverified,
+            kvmTestStatus: .notStarted
+        )
+    }
 }
 
 enum DesiredKeyboardState: String, Equatable, Sendable {
@@ -108,6 +214,14 @@ struct USBHubDescriptor: Codable, Equatable, Hashable, Identifiable, Sendable {
     let manufacturer: String
     let vendorID: Int
     let productID: Int
+
+    init(identifier: String, name: String, manufacturer: String, vendorID: Int, productID: Int) {
+        self.identifier = identifier
+        self.name = name
+        self.manufacturer = manufacturer
+        self.vendorID = vendorID
+        self.productID = productID
+    }
 
     var id: String { identifier }
 
@@ -303,4 +417,26 @@ struct OwnershipSnapshot: Equatable, Sendable {
     let usbHubPresent: Bool
     let isBusy: Bool
     let errorMessage: String?
+    let displayHandoffState: DisplayHandoffState
+    let displayHandoffError: String?
+
+    init(
+        keyboardState: KeyboardConnectionState,
+        ownershipReason: OwnershipReason,
+        monitorPresent: Bool,
+        usbHubPresent: Bool,
+        isBusy: Bool,
+        errorMessage: String?,
+        displayHandoffState: DisplayHandoffState = .idle,
+        displayHandoffError: String? = nil
+    ) {
+        self.keyboardState = keyboardState
+        self.ownershipReason = ownershipReason
+        self.monitorPresent = monitorPresent
+        self.usbHubPresent = usbHubPresent
+        self.isBusy = isBusy
+        self.errorMessage = errorMessage
+        self.displayHandoffState = displayHandoffState
+        self.displayHandoffError = displayHandoffError
+    }
 }
