@@ -980,6 +980,18 @@ final class OwnershipController {
         usbHubClaimTask = nil
     }
 
+    private func restoreDisplayForLocalUseIfNeeded() {
+        guard !operationInProgress,
+              !isSleeping,
+              localDisplayIsActive else {
+            return
+        }
+
+        // The local display signal can arrive before Bluetooth finishes claiming the keyboard.
+        displayHandoff?.restoreAfterKeyboardClaim()
+        displayHandoffActive = displayHandoff?.hasPendingKeyboardRelease ?? false
+    }
+
     private func restoreDisplayAfterKeyboardClaimIfNeeded() {
         guard !operationInProgress,
               !isSleeping,
