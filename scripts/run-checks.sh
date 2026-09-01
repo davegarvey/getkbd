@@ -22,6 +22,7 @@ swiftc \
     "$ROOT/Sources/GetKbd/PeerVerification.swift" \
     "$ROOT/Sources/GetKbd/SettingsStore.swift" \
     "$ROOT/Sources/GetKbd/SettingsWindowController.swift" \
+    "$ROOT/Sources/GetKbd/SettingsView.swift" \
     "$ROOT/Sources/GetKbd/ShortcutController.swift" \
     "$ROOT/Sources/GetKbd/SleepMonitor.swift" \
     "$ROOT/Sources/GetKbd/USBHubMonitor.swift" \
