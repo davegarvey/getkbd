@@ -32,9 +32,9 @@ If macOS blocks the app, Control-click it, choose **Open**, and confirm.
 2. Launch getkbd on both Macs.
 3. Open **Settings** and select the keyboard and external monitor.
 4. If a keyboard or monitor is missing, connect it and click **Refresh Keyboard and Monitor Lists**.
-5. Enable **Get keyboard when monitor connects** on both Macs.
-6. Enable **Release keyboard when monitor disconnects** on both Macs.
-7. Optionally enable **Let the monitor take ownership after a manual claim**.
+
+Automatic monitor switching is enabled by default. Optionally enable **Let the monitor take
+ownership after a manual claim** in Settings.
 
 ## Use
 
