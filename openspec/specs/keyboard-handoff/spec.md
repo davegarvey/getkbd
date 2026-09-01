@@ -152,6 +152,13 @@ remain the mirror master while this Mac is inactive.
   display layout and display modes, make the selected monitor primary, and only
   then report the layout restored
 
+#### Scenario: This Mac becomes active again
+
+- **WHEN** monitor automation detects the selected monitor, or KVM automation
+  detects both the selected monitor and hub locally
+- **THEN** getkbd SHALL restore the local extended layout when needed and make
+  the selected monitor primary before or while claiming the keyboard
+
 #### Scenario: No display can be mirrored
 
 - **WHEN** the selected display has disappeared, the displays are already
