@@ -18,8 +18,6 @@ swiftc \
     "$ROOT/Sources/GetKbd/MenuBarController.swift" \
     "$ROOT/Sources/GetKbd/Models.swift" \
     "$ROOT/Sources/GetKbd/OwnershipController.swift" \
-    "$ROOT/Sources/GetKbd/PeerStore.swift" \
-    "$ROOT/Sources/GetKbd/PeerVerification.swift" \
     "$ROOT/Sources/GetKbd/SettingsStore.swift" \
     "$ROOT/Sources/GetKbd/SettingsWindowController.swift" \
     "$ROOT/Sources/GetKbd/SettingsView.swift" \
@@ -27,12 +25,10 @@ swiftc \
     "$ROOT/Sources/GetKbd/SleepMonitor.swift" \
     "$ROOT/Sources/GetKbd/USBHubMonitor.swift" \
     "$ROOT/Checks/GetKbdChecks/main.swift" \
-    -framework AppKit \
-    -framework Carbon \
-    -framework ColorSync \
-    -framework IOBluetooth \
-    -framework IOKit \
-    -framework Network \
-    -framework ServiceManagement
+-framework AppKit \
+-framework Carbon \
+-framework IOBluetooth \
+-framework IOKit \
+-framework ServiceManagement
 
 "$OUTPUT"

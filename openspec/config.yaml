@@ -2,7 +2,7 @@ schema: spec-driven
 
 context: |
   Project: getkbd is a macOS menu-bar app that moves one locally paired Bluetooth keyboard between two Macs.
-  Tech stack: Swift 6.2, Swift Package Manager, AppKit, Carbon, IOBluetooth, IOKit, ColorSync, and ServiceManagement.
+  Tech stack: Swift 6.2, Swift Package Manager, AppKit, Carbon, CoreGraphics, IOBluetooth, IOKit, and ServiceManagement.
   Platform: macOS 26 or later. Build with `swift build` or `./scripts/build-app.sh`; test with `swift test`.
   Architecture: local device and system observers feed an ownership state machine; there is no network coordination or remote lock.
   Safety: monitor automation requires the selected external display; KVM automation requires both the selected display and physical USB hub.

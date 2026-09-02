@@ -2,107 +2,68 @@
 
 ## Purpose
 
-Define getkbd's persisted configuration, menu-bar controls, settings workflow,
-shortcut behavior, onboarding, and login startup experience.
+Define getkbd's local configuration, menu-bar controls, settings workflow,
+shortcut behavior, and login startup experience.
 
 ## Requirements
 
-### Requirement: Persist complete application settings
+### Requirement: Persist local application settings
 
-The system SHALL persist the selected keyboard, display, USB hub, automatic
-source, behavior flags, shortcut, and launch-at-login preference between runs.
+The system SHALL persist the selected keyboard, external display, USB hub,
+shortcut, and launch-at-login preference between runs.
 
 #### Scenario: First run has no saved settings
 
 - **WHEN** no valid getkbd settings are stored
-- **THEN** getkbd SHALL use an unset keyboard, display, and USB hub, monitor
-  automation, enabled monitor claiming, disabled monitor takeover from manual
-  ownership, enabled monitor release, enabled release before sleep, the default
-  Ctrl+Opt+Cmd+K shortcut, and enabled launch at login
+- **THEN** getkbd SHALL use unset keyboard, display, and USB hub selections, the
+  default Ctrl+Opt+Cmd+K shortcut, and enabled launch at login
 
 #### Scenario: Valid settings are stored
 
 - **WHEN** valid settings are present in local preferences
 - **THEN** getkbd SHALL restore them at startup
 
-#### Scenario: Stored settings are invalid
+#### Scenario: Stored settings are incomplete
 
-- **WHEN** saved settings cannot be decoded
-- **THEN** getkbd SHALL discard the invalid value and use all initial defaults
+- **WHEN** older settings omit a current local setting
+- **THEN** getkbd SHALL retain the decodable device and shortcut values and SHALL
+  require setup only for missing selections
 
-#### Scenario: Legacy KVM setting is loaded
+### Requirement: Guide local KVM setup
 
-- **WHEN** saved settings use the legacy `kvmInput` automatic-source value
-- **THEN** getkbd SHALL interpret it as KVM USB hub automation
+The settings window SHALL guide the user to select the same paired keyboard and
+external display on both Macs and to identify the USB hub that follows the BenQ
+input. Setup SHALL not require the other Mac to be discoverable or connected to a
+network.
 
-### Requirement: Guide incomplete configuration through onboarding
+#### Scenario: A required device is missing
 
-The system SHALL open a guided setup when a keyboard is not selected or when the
-selected automatic source lacks the device conditions it requires. The guided
-setup SHALL describe switching choices using the user's physical desk action.
-
-#### Scenario: No keyboard is selected
-
-- **WHEN** getkbd launches without a selected keyboard
-- **THEN** getkbd SHALL show guided setup with a clear instruction to select or
-  pair the shared keyboard
-
-#### Scenario: Monitor automation lacks a display
-
-- **WHEN** monitor automation is selected without a selected display
-- **THEN** guided setup SHALL identify the missing external display as the next
-  required step
-
-#### Scenario: KVM automation lacks a condition
-
-- **WHEN** KVM USB hub automation is selected without either a selected display
-  or selected USB hub
-- **THEN** guided setup SHALL identify the missing condition and SHALL offer hub
-  detection before requiring manual hub selection
-
-#### Scenario: Manual-only mode has only a keyboard
-
-- **WHEN** manual-only mode is selected with a keyboard but no display or USB
-  hub
-- **THEN** the missing automatic devices SHALL not require onboarding
-
-#### Scenario: User chooses cable swapping
-
-- **WHEN** the user selects `Unplug and reconnect the display cable`
-- **THEN** setup SHALL explain that getkbd watches the selected display appear on
-  one Mac and disappear from the other
-
-#### Scenario: User chooses monitor-input switching
-
-- **WHEN** the user selects `Both Macs stay connected and I change the monitor
-  input`
-- **THEN** setup SHALL explain that it will detect the USB connection that
-  follows the selected input and SHALL offer paired-Mac verification
-
-### Requirement: Configure devices and switching behavior
-
-The settings window SHALL allow the user to select a paired keyboard, external
-display, USB hub, automatic source, monitor behavior, sleep behavior, shortcut,
-and launch-at-login preference.
+- **WHEN** the keyboard, external display, or USB hub is not selected
+- **THEN** guided setup SHALL identify that local device as the next required step
 
 #### Scenario: Selected device is temporarily absent
 
 - **WHEN** a previously selected keyboard, display, or USB hub is not currently
   detected
-- **THEN** settings SHALL retain and display the selection as not currently
-  available rather than silently replacing it
+- **THEN** settings SHALL retain and display the selection as unavailable rather
+  than silently replacing it
 
-#### Scenario: Automatic source changes
+#### Scenario: User identifies the KVM hub
 
-- **WHEN** the user changes the automatic source or a behavior checkbox
-- **THEN** getkbd SHALL persist the change and immediately re-evaluate ownership
-  using current device conditions
+- **WHEN** the user starts local hub identification and exactly one hub identifier
+  changes after the BenQ input changes
+- **THEN** getkbd SHALL select that hub locally
 
-#### Scenario: Monitor-only options are hidden
+#### Scenario: Several hubs change during identification
 
-- **WHEN** the automatic source is KVM USB hub or manual only
-- **THEN** monitor-specific claim, takeover, and disconnect options SHALL be
-  hidden while their stored values are retained
+- **WHEN** more than one hub identifier changes during identification
+- **THEN** getkbd SHALL cancel automatic selection and instruct the user to select
+  the hub manually
+
+### Requirement: Configure local switching devices
+
+The settings window SHALL allow the user to select a paired keyboard, external
+display, USB hub, shortcut, and launch-at-login preference.
 
 #### Scenario: Keyboard selection changes
 
@@ -111,24 +72,28 @@ and launch-at-login preference.
   before applying the new selection and SHALL restore the old selection if that
   release fails
 
+#### Scenario: Shortcut changes
+
+- **WHEN** the user records a shortcut containing at least one modifier and a key
+- **THEN** getkbd SHALL register and persist the new shortcut
+
 ### Requirement: Provide live menu-bar status and manual actions
 
-The system SHALL provide a menu-bar interface showing the selected-device state,
-ownership reason, automatic conditions, peer verification state when configured,
-display-handoff state when active, errors, and explicit keyboard actions.
+The system SHALL provide a menu-bar interface showing keyboard state, local USB
+hub state, physical display state, display parking state, errors, and explicit
+keyboard actions.
 
 #### Scenario: Keyboard is configured
 
 - **WHEN** the menu is opened with a selected keyboard
-- **THEN** it SHALL show the keyboard connection state, ownership reason, desk
-  monitor condition, KVM hub condition, switching method, and any current error
+- **THEN** it SHALL show the keyboard state, input signal state, display state, and
+  current ownership action
 
 #### Scenario: Keyboard is not configured
 
 - **WHEN** no keyboard is selected
-- **THEN** the menu and status tooltip SHALL identify the keyboard as not
-  configured, offer a path to guided setup, and disable the manual claim and
-  release actions
+- **THEN** the menu SHALL identify the keyboard as not configured, offer settings,
+  and disable manual keyboard actions
 
 #### Scenario: User claims or releases manually
 
@@ -136,19 +101,10 @@ display-handoff state when active, errors, and explicit keyboard actions.
   global shortcut
 - **THEN** getkbd SHALL request the corresponding manual ownership action
 
-#### Scenario: KVM setup is unverified
+#### Scenario: Display parking needs attention
 
-- **WHEN** monitor-input switching is selected but peer verification or the KVM
-  test has not passed
-- **THEN** the menu SHALL show `Setup not verified` and offer access to setup
-  without hiding manual keyboard actions
-
-#### Scenario: Display layout is being handed off
-
-- **WHEN** getkbd is preparing, protecting, restoring, or recovering the display
-  layout during a keyboard handoff
-- **THEN** the menu SHALL show the current display-handoff phase or attention
-  state
+- **WHEN** display parking or restoration fails
+- **THEN** the menu SHALL show the failure and offer a retry action
 
 #### Scenario: Bluetooth operation is busy
 
@@ -158,28 +114,19 @@ display-handoff state when active, errors, and explicit keyboard actions.
 
 ### Requirement: Show actionable setup readiness
 
-The guided setup SHALL present a single readiness state, the next unmet
-requirement, and contextual recovery actions for device, peer, hub, keyboard,
-and display-layout problems.
+The guided setup SHALL present a single readiness state, the next unmet local
+requirement, and a recovery action for device or display-parking problems.
 
 #### Scenario: All selected requirements pass
 
-- **WHEN** the selected keyboard and display conditions are valid and the chosen
-  switching path is verified or intentionally local-only
-- **THEN** setup SHALL show `Ready on this Mac` and summarize how switching will
-  work
+- **WHEN** the selected keyboard, external display, and USB hub are configured
+- **THEN** setup SHALL show Ready to switch and explain that changing the BenQ
+  input moves the keyboard locally without a network connection
 
 #### Scenario: A requirement is missing
 
-- **WHEN** any required setup condition is absent
-- **THEN** setup SHALL show `Needs attention`, identify the next step, and place
-  its recovery action near that step
-
-#### Scenario: Login-item update fails
-
-- **WHEN** macOS rejects the login-item update
-- **THEN** the UI SHALL show the actual registration state or a specific action,
-  such as using the packaged app or approving it in System Settings
+- **WHEN** any required setup selection is absent
+- **THEN** setup SHALL show Needs attention and identify the next step
 
 ### Requirement: Register and edit the global shortcut
 
@@ -197,19 +144,7 @@ modifier and a key.
 
 - **WHEN** the requested global shortcut cannot be registered
 - **THEN** getkbd SHALL keep the previously working shortcut, mark the requested
-  shortcut unavailable in the menu, and show an explanatory settings message
-
-#### Scenario: User records a shortcut
-
-- **WHEN** the user records a shortcut and presses a key with at least one
-  modifier
-- **THEN** getkbd SHALL persist that key and modifier combination and register
-  it for future Get Keyboard actions
-
-#### Scenario: User cancels shortcut recording
-
-- **WHEN** the user presses Escape while recording a shortcut
-- **THEN** getkbd SHALL leave the existing shortcut unchanged
+  shortcut unavailable, and show an explanatory settings message
 
 ### Requirement: Support optional launch at login
 
@@ -225,31 +160,23 @@ macOS login-item service.
 
 #### Scenario: Login-item registration fails
 
-- **WHEN** macOS rejects a login-item update, including an unsupported or
-  improperly packaged app
-- **THEN** getkbd SHALL restore the checkbox to its prior state and show a
-  message telling the user to use the packaged app bundle
+- **WHEN** macOS rejects a login-item update
+- **THEN** getkbd SHALL restore the checkbox to its prior state and show a specific
+  recovery message
 
-#### Scenario: Launch preference is enabled at startup
+### Requirement: Run as a local menu-bar application
 
-- **WHEN** saved settings enable launch at login
-- **THEN** getkbd SHALL attempt to register the app during launch without
-  preventing the rest of the app from starting
-
-### Requirement: Run as a menu-bar application and stop observers cleanly
-
-The system SHALL run as an accessory menu-bar app, start its local observers at
-launch, and stop observers and the global shortcut on termination without
-implicitly releasing the keyboard.
+The system SHALL run as an accessory menu-bar app, start local observers at launch,
+and stop observers and the global shortcut on termination.
 
 #### Scenario: Application launches
 
 - **WHEN** getkbd starts
-- **THEN** it SHALL initialize the selected keyboard, display, USB hub, sleep,
-  Bluetooth, and shortcut monitoring before publishing its menu status
+- **THEN** it SHALL initialize local Bluetooth, display, USB hub, sleep, wake, and
+  shortcut monitoring before publishing menu status
 
 #### Scenario: Application quits
 
 - **WHEN** the user quits getkbd
-- **THEN** getkbd SHALL stop its monitors and shortcut registration and SHALL not
-  automatically release the keyboard as a quit side effect
+- **THEN** getkbd SHALL restore any parked display and SHALL not automatically
+  release the keyboard as a quit side effect

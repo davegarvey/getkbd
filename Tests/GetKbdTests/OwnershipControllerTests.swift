@@ -3,250 +3,109 @@ import XCTest
 
 @MainActor
 final class OwnershipControllerTests: XCTestCase {
-    func testMonitorConnectionClaimsAndDisconnectionReleases() async {
+    func testInactiveStartupParksDisplayEvenWhenKeyboardIsDisconnected() async {
         let keyboard = FakeKeyboardController()
-        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
+        let display = FakeDisplayParkingController()
+        let controller = OwnershipController(keyboard: keyboard, display: display)
 
-        controller.start(monitorPresent: false)
-        controller.monitorConnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.connectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .monitor)
-
-        controller.monitorDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
-    }
-
-    func testStartupClaimIsOwnedByTheMonitor() async {
-        let keyboard = FakeKeyboardController()
-        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
-
-        controller.start(monitorPresent: true)
-        await controller.waitForIdle()
-
-        XCTAssertEqual(controller.snapshot.ownershipReason, .monitor)
-
-        controller.monitorDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-    }
-
-    func testConnectedKeyboardAtDeskStartupIsMonitorOwned() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.currentState = .connectedLocal
-        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
-
-        controller.start(monitorPresent: true)
-        await controller.waitForIdle()
-
-        XCTAssertEqual(controller.snapshot.ownershipReason, .monitor)
-
-        controller.monitorDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-    }
-
-    func testManualOwnershipSurvivesMonitorDisconnection() async {
-        let keyboard = FakeKeyboardController()
-        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
-
-        controller.start(monitorPresent: false)
-        controller.manualClaim()
-        await controller.waitForIdle()
-        controller.monitorDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.connectCallCount, 1)
-        XCTAssertEqual(keyboard.disconnectCallCount, 0)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .manual)
-        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
-    }
-
-    func testMonitorConnectionCanTakeOwnershipAfterManualClaim() async {
-        let keyboard = FakeKeyboardController()
-        let controller = OwnershipController(
-            keyboard: keyboard,
-            behavior: AutomaticBehavior(
-                claimOnMonitorConnect: true,
-                monitorTakesOwnershipFromManual: true,
-                releaseOnMonitorDisconnect: true,
-                releaseBeforeSleep: true
-            )
-        )
-
-        controller.start(monitorPresent: false)
-        controller.manualClaim()
-        await controller.waitForIdle()
-
-        controller.monitorConnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(controller.snapshot.ownershipReason, .monitor)
-
-        controller.monitorDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
-    }
-
-    func testUSBHubSourceIgnoresMonitorAndClaimsOnHubConnection() async {
-        let keyboard = FakeKeyboardController()
-        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
-
-        controller.start(monitorPresent: true)
-        controller.monitorConnected()
+        controller.start(monitorPresent: true, usbHubPresent: false)
         await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.connectCallCount, 0)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+        XCTAssertEqual(keyboard.disconnectCallCount, 0)
+        XCTAssertEqual(display.events, [.park])
+        XCTAssertEqual(controller.snapshot.displayParkingState, .parked)
+    }
 
+    func testHubPresenceClaimsKeyboardAndRestoresDisplay() async {
+        let keyboard = FakeKeyboardController()
+        let display = FakeDisplayParkingController()
+        let controller = OwnershipController(keyboard: keyboard, display: display)
+
+        controller.start(monitorPresent: true, usbHubPresent: false)
         controller.usbHubConnected()
         await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.connectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .usbHub)
-    }
-
-    func testUSBHubOwnedKeyboardReleasesWhenMonitorDisconnects() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.configuredKeyboard = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
-        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
-
-        controller.start(monitorPresent: true)
-        controller.usbHubConnected()
-        await controller.waitForIdle()
-
-        controller.monitorDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
-    }
-
-    func testUSBHubDisconnectReleasesSelectedExistingKeyboard() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.configuredKeyboard = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
-        keyboard.currentState = .connectedLocal
-        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
-
-        controller.start(monitorPresent: true, usbHubPresent: true)
-        await controller.waitForIdle()
-        controller.usbHubDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
-    }
-
-    func testUSBHubDisconnectDoesNotReleaseUnconfiguredKeyboard() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.currentState = .connectedLocal
-        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
-
-        controller.start(monitorPresent: true, usbHubPresent: true)
-        await controller.waitForIdle()
-        controller.usbHubDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 0)
         XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .usbHub)
+        XCTAssertEqual(display.events, [.park, .restore])
     }
 
-    func testUSBHubSourceReleasesKeyboardLocally() async {
+    func testHubLossReleasesKeyboardAndParksDisplay() async {
         let keyboard = FakeKeyboardController()
-        keyboard.configuredKeyboard = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
         keyboard.currentState = .connectedLocal
-        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
+        let display = FakeDisplayParkingController()
+        let controller = OwnershipController(keyboard: keyboard, display: display)
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         await controller.waitForIdle()
+        display.events.removeAll()
+
         controller.usbHubDisconnected()
         await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.disconnectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
         XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+        XCTAssertEqual(display.events, [.park])
     }
 
-    func testChangingFromMonitorToKvmReleasesMonitorOwnership() async {
+    func testMissingMonitorIsAClaimSafetyCondition() async {
         let keyboard = FakeKeyboardController()
-        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
+        let display = FakeDisplayParkingController()
+        let controller = OwnershipController(keyboard: keyboard, display: display)
 
-        controller.start(monitorPresent: true)
-        await controller.waitForIdle()
-        controller.updateBehavior(.usbHub, monitorPresent: true)
+        controller.start(monitorPresent: false, usbHubPresent: true)
         await controller.waitForIdle()
 
-        XCTAssertEqual(keyboard.disconnectCallCount, 1)
+        XCTAssertEqual(keyboard.connectCallCount, 0)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+        XCTAssertEqual(display.events, [.park])
     }
 
-    func testChangingFromKvmToMonitorWithNoMonitorReleasesKeyboard() async {
+    func testManualClaimWorksWithoutAutomaticSignal() async {
         let keyboard = FakeKeyboardController()
-        let controller = OwnershipController(keyboard: keyboard, behavior: .usbHub)
+        let display = FakeDisplayParkingController()
+        let controller = OwnershipController(keyboard: keyboard, display: display)
 
-        controller.start(monitorPresent: true, usbHubPresent: true)
-        await controller.waitForIdle()
-        controller.updateBehavior(.allEnabled, monitorPresent: false, usbHubPresent: false)
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 1)
-        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
-    }
-
-    func testSleepReleasesManualOwnership() async {
-        let keyboard = FakeKeyboardController()
-        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
-
+        controller.start(monitorPresent: false, usbHubPresent: false)
         controller.manualClaim()
         await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+        XCTAssertEqual(controller.snapshot.ownershipReason, .manual)
+        XCTAssertEqual(display.events, [.park, .restore])
+    }
+
+    func testSleepReleasesKeyboardAndParksDisplay() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.currentState = .connectedLocal
+        let display = FakeDisplayParkingController()
+        let controller = OwnershipController(keyboard: keyboard, display: display)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await controller.waitForIdle()
+        display.events.removeAll()
+
         controller.willSleep()
         await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.disconnectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .none)
+        XCTAssertEqual(display.events, [.park])
     }
 
-    func testExistingConnectionIsNotReleasedWhenMonitorIsAbsent() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.currentState = .connectedLocal
-        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
-
-        controller.start(monitorPresent: false)
-        await controller.waitForIdle()
-        controller.monitorDisconnected()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(keyboard.disconnectCallCount, 0)
-        XCTAssertEqual(controller.snapshot.ownershipReason, .existing)
-        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
-    }
-
-    func testDisconnectDuringClaimIsReconciledAfterClaimCompletes() async {
+    func testSignalReversalDuringClaimIsReconciledAfterClaimCompletes() async {
         let keyboard = FakeKeyboardController()
         keyboard.blockNextConnect = true
-        let controller = OwnershipController(keyboard: keyboard, behavior: .allEnabled)
+        let display = FakeDisplayParkingController()
+        let controller = OwnershipController(keyboard: keyboard, display: display)
 
-        controller.start(monitorPresent: false)
-        controller.monitorConnected()
+        controller.start(monitorPresent: true, usbHubPresent: true)
         await keyboard.waitUntilConnectIsBlocked()
-        controller.monitorDisconnected()
+        controller.usbHubDisconnected()
 
         keyboard.completeBlockedConnect(success: true)
         await controller.waitForIdle()
@@ -254,99 +113,22 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(keyboard.connectCallCount, 1)
         XCTAssertEqual(keyboard.disconnectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-    }
-
-    func testDisplayIsMirroredBeforeReleaseAndRestoredAfterClaim() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.currentState = .connectedLocal
-        let display = FakeDisplayHandoffController()
-        let controller = OwnershipController(
-            keyboard: keyboard,
-            behavior: .allEnabled,
-            displayHandoff: display
-        )
-
-        controller.start(monitorPresent: false)
-        display.events.removeAll()
-        controller.manualRelease()
-        await controller.waitForIdle()
-        controller.manualClaim()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(display.events, [.mirror, .restore])
-    }
-
-    func testDisplayHandoffStateIsPublished() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.currentState = .connectedLocal
-        let display = FakeDisplayHandoffController()
-        let controller = OwnershipController(
-            keyboard: keyboard,
-            behavior: .allEnabled,
-            displayHandoff: display
-        )
-
-        controller.start(monitorPresent: false)
-        controller.manualRelease()
-        await controller.waitForIdle()
-        XCTAssertEqual(controller.snapshot.displayHandoffState, .protected)
-
-        controller.manualClaim()
-        await controller.waitForIdle()
-        XCTAssertEqual(controller.snapshot.displayHandoffState, .restored)
-    }
-
-    func testFailedReleaseKeepsDisplayMirrored() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.currentState = .connectedLocal
-        keyboard.failNextDisconnect = true
-        let display = FakeDisplayHandoffController()
-        let controller = OwnershipController(
-            keyboard: keyboard,
-            behavior: .allEnabled,
-            displayHandoff: display
-        )
-
-        controller.start(monitorPresent: false)
-        display.events.removeAll()
-        controller.manualRelease()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(display.events, [.mirror])
-    }
-
-    func testFailedReleaseRestoresDisplayIfKeyboardRemainsConnected() async {
-        let keyboard = FakeKeyboardController()
-        keyboard.currentState = .connectedLocal
-        keyboard.failNextDisconnect = true
-        keyboard.keepConnectedOnDisconnectFailure = true
-        let display = FakeDisplayHandoffController()
-        let controller = OwnershipController(
-            keyboard: keyboard,
-            behavior: .allEnabled,
-            displayHandoff: display
-        )
-
-        controller.start(monitorPresent: false)
-        display.events.removeAll()
-        controller.manualRelease()
-        await controller.waitForIdle()
-
-        XCTAssertEqual(display.events, [.mirror, .restore])
+        XCTAssertEqual(display.events, [.restore, .park])
     }
 }
 
 @MainActor
 private final class FakeKeyboardController: KeyboardControlling {
-    var configuredKeyboard: KeyboardDescriptor?
+    var configuredKeyboard: KeyboardDescriptor? = KeyboardDescriptor(
+        identifier: "keyboard",
+        name: "Shared Keyboard"
+    )
     var currentState: KeyboardConnectionState = .disconnected
     var lastError: String?
     var onStateChange: ((KeyboardConnectionState) -> Void)?
     var connectCallCount = 0
     var disconnectCallCount = 0
     var blockNextConnect = false
-    var failNextDisconnect = false
-    var keepConnectedOnDisconnectFailure = false
     private var blockedConnectContinuation: CheckedContinuation<Bool, Never>?
 
     var state: KeyboardConnectionState { currentState }
@@ -383,14 +165,9 @@ private final class FakeKeyboardController: KeyboardControlling {
         disconnectCallCount += 1
         currentState = .disconnecting
         notify()
-        let succeeds = !failNextDisconnect
-        failNextDisconnect = false
-        currentState = succeeds
-            ? .disconnected
-            : (keepConnectedOnDisconnectFailure ? .connectedLocal : .failed)
-        keepConnectedOnDisconnectFailure = false
+        currentState = .disconnected
         notify()
-        return succeeds
+        return true
     }
 
     func completeBlockedConnect(success: Bool) {
@@ -410,46 +187,29 @@ private final class FakeKeyboardController: KeyboardControlling {
 }
 
 @MainActor
-private final class FakeDisplayHandoffController: DisplayHandoffControlling {
+private final class FakeDisplayParkingController: DisplayParkingControlling {
     enum Event: Equatable {
-        case mirror
+        case park
         case restore
     }
 
     var events: [Event] = []
-    var hasPendingKeyboardRelease = false
-    var handoffState: DisplayHandoffState = .idle
-    var handoffError: String?
-    var onHandoffStateChange: (() -> Void)?
+    var parkingState: DisplayParkingState = .restored
+    var parkingError: String?
+    var onStateChange: (() -> Void)?
+    var isPresent = true
 
-    func prepareForKeyboardRelease() {
-        events.append(.mirror)
-        handoffState = .protected
-        hasPendingKeyboardRelease = true
-        onHandoffStateChange?()
+    func park() {
+        guard parkingState != .parked else { return }
+        events.append(.park)
+        parkingState = .parked
+        onStateChange?()
     }
 
-    func restoreAfterKeyboardClaim() {
+    func restore() {
+        guard parkingState != .restored else { return }
         events.append(.restore)
-        handoffState = .restored
-        hasPendingKeyboardRelease = false
-        onHandoffStateChange?()
+        parkingState = .restored
+        onStateChange?()
     }
-}
-
-private extension AutomaticBehavior {
-    static let allEnabled = AutomaticBehavior(
-        claimOnMonitorConnect: true,
-        monitorTakesOwnershipFromManual: false,
-        releaseOnMonitorDisconnect: true,
-        releaseBeforeSleep: true
-    )
-
-    static let usbHub = AutomaticBehavior(
-        claimOnMonitorConnect: true,
-        monitorTakesOwnershipFromManual: false,
-        releaseOnMonitorDisconnect: true,
-        releaseBeforeSleep: true,
-        automaticSource: .usbHub
-    )
 }

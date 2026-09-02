@@ -6,7 +6,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsStore = SettingsStore()
     private let shortcutController = ShortcutController()
     private let sleepMonitor = SleepMonitor()
-    private let peerVerification = PeerVerificationController()
 
     private var keyboardController: IOBluetoothKeyboardController!
     private var displayMonitor: DisplayMonitor!
@@ -24,34 +23,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usbHubMonitor = USBHubMonitor(configuredHubIdentifier: settings.selectedUSBHub?.identifier)
         ownershipController = OwnershipController(
             keyboard: keyboardController,
-            behavior: AutomaticBehavior(
-                claimOnMonitorConnect: settings.claimOnMonitorConnect,
-                monitorTakesOwnershipFromManual: settings.monitorTakesOwnershipFromManual,
-                releaseOnMonitorDisconnect: settings.releaseOnMonitorDisconnect,
-                releaseBeforeSleep: settings.releaseBeforeSleep,
-                automaticSource: settings.automaticSource
-            ),
-            displayHandoff: displayMonitor
+            display: displayMonitor
         )
 
         menuBarController = MenuBarController(
             ownership: ownershipController,
-            displayMonitor: displayMonitor,
             settingsStore: settingsStore,
-            peer: peerVerification,
             showSettings: { [weak self] in self?.showSettings() },
             quit: { NSApp.terminate(nil) }
         )
 
         ownershipController.onChange = { [weak self] snapshot in
-            guard let self else { return }
-            self.peerVerification.publishLocalStatus(
-                settings: self.settingsStore.value,
-                snapshot: snapshot,
-                hubs: self.usbHubMonitor.availableHubs
-            )
-            self.settingsWindowController?.update(snapshot: snapshot)
-            self.menuBarController.refresh()
+            self?.settingsWindowController?.update(snapshot: snapshot)
+            self?.menuBarController.refresh()
         }
         ownershipController.onKeyboardReconfigurationFailure = { [weak self] message in
             guard let self else { return }
@@ -69,8 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.ownershipController.monitorDisconnected()
             }
         }
-        displayMonitor.onConfigurationChange = { [weak self] in
-            self?.ownershipController.displayConfigurationChanged()
+        displayMonitor.onStateChange = { [weak self] in
+            self?.ownershipController.displayStateChanged()
         }
         usbHubMonitor.onChange = { [weak self] isPresent in
             if isPresent {
@@ -80,15 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         usbHubMonitor.onDevicesChanged = { [weak self] in
-            guard let self else { return }
-            self.peerVerification.localHubsChanged(self.usbHubMonitor.availableHubs)
-            self.settingsWindowController?.usbHubListChanged()
-        }
-
-        peerVerification.onChange = { [weak self] in
-            guard let self else { return }
-            self.settingsWindowController?.refreshPeerState()
-            self.menuBarController.refresh()
+            self?.settingsWindowController?.usbHubListChanged()
         }
 
         sleepMonitor.onWillSleep = { [weak self] in
@@ -96,7 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         sleepMonitor.onDidWake = { [weak self] in
             guard let self else { return }
-            self.ownershipController.didWake(monitorPresent: self.displayMonitor.isPresent)
+            self.ownershipController.didWake(
+                monitorPresent: self.displayMonitor.isPresent,
+                usbHubPresent: self.usbHubMonitor.isPresent
+            )
         }
 
         shortcutController.onShortcut = { [weak self] in
@@ -111,9 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             monitorPresent: monitorPresent,
             usbHubPresent: usbHubMonitor.isPresent
         )
-        if settings.automaticSource == .usbHub {
-            peerVerification.start()
-        }
         menuBarController.setShortcutAvailable(shortcutController.isRegistered)
 
         if settings.launchAtLogin {
@@ -130,12 +106,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        displayMonitor.restore()
         sleepMonitor.stop()
         displayMonitor.stop()
         usbHubMonitor.stop()
         keyboardController.stop()
         shortcutController.unregister()
-        peerVerification.stop()
     }
 
     private func showSettings() {
@@ -150,7 +126,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             usbHub: usbHubMonitor,
             display: displayMonitor,
             ownership: ownershipController,
-            peer: peerVerification,
             onChange: { [weak self] settings in
                 self?.apply(settings)
             }
@@ -161,7 +136,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func apply(_ settings: AppSettings) {
         let previous = settingsStore.value
-
         var effectiveSettings = settings
         var shortcutFailed = false
         if previous.shortcut != settings.shortcut,
@@ -172,42 +146,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         settingsStore.replace(effectiveSettings)
 
-        if effectiveSettings.automaticSource == .usbHub {
-            peerVerification.start()
-        } else if previous.automaticSource == .usbHub {
-            peerVerification.stop()
-        }
-
         if previous.selectedDisplay?.identifier != effectiveSettings.selectedDisplay?.identifier {
+            displayMonitor.restore()
             displayMonitor.configuredDisplayIdentifier = effectiveSettings.selectedDisplay?.identifier
         }
         if previous.selectedUSBHub?.identifier != effectiveSettings.selectedUSBHub?.identifier {
             usbHubMonitor.configuredHubIdentifier = effectiveSettings.selectedUSBHub?.identifier
         }
 
-        ownershipController.updateBehavior(
-            AutomaticBehavior(
-                claimOnMonitorConnect: effectiveSettings.claimOnMonitorConnect,
-                monitorTakesOwnershipFromManual: effectiveSettings.monitorTakesOwnershipFromManual,
-                releaseOnMonitorDisconnect: effectiveSettings.releaseOnMonitorDisconnect,
-                releaseBeforeSleep: effectiveSettings.releaseBeforeSleep,
-                automaticSource: effectiveSettings.automaticSource
-            ),
+        ownershipController.updateSignals(
             monitorPresent: displayMonitor.isPresent,
             usbHubPresent: usbHubMonitor.isPresent
         )
 
         if previous.selectedKeyboard != effectiveSettings.selectedKeyboard {
-            ownershipController.reconfigureKeyboard(
-                to: effectiveSettings.selectedKeyboard,
-                monitorPresent: displayMonitor.isPresent
-            )
+            ownershipController.reconfigureKeyboard(to: effectiveSettings.selectedKeyboard)
         }
 
-        if effectiveSettings.shortcut != settings.shortcut {
-            settingsWindowController?.reload()
-        }
         if shortcutFailed {
+            settingsWindowController?.reload()
             settingsWindowController?.showMessage("That shortcut could not be registered.")
         }
         menuBarController.setShortcutAvailable(shortcutController.isRegistered)

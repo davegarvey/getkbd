@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Define how getkbd claims and releases a selected Bluetooth keyboard and how
-local automatic and manual ownership decisions are reconciled safely.
+Define how getkbd moves one locally paired Bluetooth keyboard between two Macs
+using the selected monitor KVM's local USB hub signal.
 
 ## Requirements
 
@@ -36,240 +36,177 @@ the old Mac does not immediately reconnect.
 
 - **WHEN** no keyboard is selected or the selected Bluetooth device cannot be
   resolved
-- **THEN** the operation SHALL fail without claiming a device and SHALL expose
-  a user-readable error
+- **THEN** the operation SHALL fail without claiming a device and SHALL expose a
+  user-readable error
 
-### Requirement: Report Bluetooth operation state and failures
+### Requirement: Use the local KVM USB hub as the automatic ownership signal
 
-The system SHALL expose connection states for the selected keyboard, serialize
-Bluetooth operations, and report failed claims or releases instead of treating
-them as successful.
-
-#### Scenario: Operation is in progress
-
-- **WHEN** a claim or release is running
-- **THEN** the keyboard state SHALL indicate the corresponding in-progress state
-  and another ownership operation SHALL wait until it finishes
-
-#### Scenario: Bluetooth operation times out or verification fails
-
-- **WHEN** pairing, connection, pairing removal, or connection verification
-  times out or returns an error
-- **THEN** the keyboard state SHALL become failed and the last error SHALL be
-  available to the menu-bar UI
-
-#### Scenario: Pairing requires user action
-
-- **WHEN** Bluetooth requests numeric confirmation, a passkey, or a PIN
-- **THEN** numeric confirmation SHALL be accepted automatically and getkbd SHALL
-  activate an alert explaining how to type a passkey or PIN on the keyboard
-
-### Requirement: Switch according to the configured ownership source
-
-The system SHALL support monitor connection, KVM USB hub connection, and manual
-only as mutually exclusive automatic sources.
-
-#### Scenario: Monitor automation claims on connection
-
-- **WHEN** monitor connection is the automatic source, the selected monitor is
-  present, and claiming on monitor connection is enabled
-- **THEN** getkbd SHALL request the keyboard and attribute the resulting
-  ownership to the monitor
-
-#### Scenario: Monitor automation releases its own claim
-
-- **WHEN** the selected monitor disappears, monitor automation owns the
-  keyboard, and release on monitor disconnect is enabled
-- **THEN** getkbd SHALL request release and clear monitor ownership after a
-  successful release
-
-#### Scenario: Manual ownership survives monitor changes
-
-- **WHEN** the keyboard was claimed manually and the selected monitor
-  disconnects
-- **THEN** getkbd SHALL keep the keyboard connected unless monitor takeover was
-  explicitly enabled and a later monitor event transfers ownership
-
-#### Scenario: Manual-only mode ignores automatic sensors
-
-- **WHEN** the automatic source is manual only
-- **THEN** monitor and USB hub events SHALL not claim or release the keyboard,
-  while explicit Get Keyboard and Release Keyboard actions SHALL still work
-
-### Requirement: Gate KVM automation on the monitor and selected USB hub
-
-The system SHALL treat the selected monitor and selected USB hub as joint local
-safety conditions for monitor-input automation. Peer verification MAY confirm the
-setup but SHALL not replace those local conditions for ownership decisions.
+The system SHALL treat the selected physical USB hub as the automatic active-input
+signal. The selected external display SHALL be a joint safety condition, not an
+ownership signal. Automatic claim readiness SHALL require the Mac to be awake,
+the selected display to be online, and the selected USB hub to be present locally.
 
 #### Scenario: KVM signal becomes active
 
-- **WHEN** monitor-input automation is selected and both the selected monitor and
-  selected USB hub are present locally
-- **THEN** getkbd SHALL schedule a delayed claim for the selected keyboard and
-  attribute ownership to the USB hub signal
+- **WHEN** the selected display is online and the selected USB hub becomes stably
+  present locally while the Mac is awake
+- **THEN** getkbd SHALL restore the external display layout and SHALL schedule a
+  delayed keyboard claim attributed to the USB hub
 
 #### Scenario: KVM safety signal disappears
 
-- **WHEN** monitor-input automation is selected and either the selected monitor
-  or selected USB hub is absent locally
-- **THEN** getkbd SHALL request release of the selected keyboard regardless of
-  the monitor release preference
-
-#### Scenario: KVM automation does not use the monitor claim preference
-
-- **WHEN** monitor-input automation is selected
-- **THEN** the monitor claim checkbox SHALL not be required for or control a KVM
-  claim
+- **WHEN** the selected display is offline or the selected USB hub is absent
+- **THEN** getkbd SHALL park the external display when possible and SHALL request
+  release of the selected keyboard regardless of any manual preference
 
 #### Scenario: Both Macs see the selected hub
 
 - **WHEN** the selected USB hub is simultaneously visible to both Macs
-- **THEN** each local instance MAY consider its own local KVM conditions ready,
-  because getkbd provides no remote ownership lock, but paired verification SHALL
-  mark the setup unsafe and SHALL not report it as verified
+- **THEN** each local instance SHALL rely only on its local signal and SHALL not
+  claim that a remote ownership lock exists
 
-### Requirement: Protect the shared display during keyboard release
+#### Scenario: Hub presence flaps during an input switch
 
-When a keyboard release occurs while the selected external display remains
-attached and a built-in display is available, getkbd SHALL make the built-in
-laptop display primary, temporarily mirror the selected external display onto it,
-and SHALL retain the prior extended layout for restoration. The laptop SHALL
-remain the mirror master while this Mac is inactive.
+- **WHEN** USB notifications rapidly alternate between present and absent
+- **THEN** getkbd SHALL debounce the selected-hub condition before changing the
+  automatic ownership target
 
-#### Scenario: Display remains attached during release
+### Requirement: Park the external display without mirroring
 
-- **WHEN** getkbd releases the keyboard while the selected external display and
-  an active built-in display remain available
-- **THEN** getkbd SHALL make the laptop primary before enabling the display
-  mirror, prepare that mirror before or as part of the release, and SHALL expose a
-  display-protection phase to the UI
+When the automatic target is inactive and the selected external display remains
+online, getkbd SHALL disable that display in the local WindowServer desktop rather
+than mirror it with another display. getkbd SHALL retain the active extended
+layout and display modes for restoration. Parking SHALL not select a new display
+mode or inherit scaling from another display.
 
-#### Scenario: Keyboard is claimed after protected release
+#### Scenario: Inactive Mac still sees the external display
 
-- **WHEN** this Mac successfully claims the keyboard after a protected release
-- **THEN** getkbd SHALL disable the temporary mirror, restore the saved extended
-  display layout and display modes, make the selected monitor primary, and only
-  then report the layout restored
+- **WHEN** the selected USB hub disappears while the external display remains
+  physically online
+- **THEN** getkbd SHALL park the external display even if the keyboard is already
+  disconnected, so macOS can re-home windows onto the laptop display
 
-#### Scenario: This Mac becomes active again
+#### Scenario: Display is parked
 
-- **WHEN** monitor automation detects the selected monitor, or KVM automation
-  detects both the selected monitor and hub locally
-- **THEN** getkbd SHALL restore the local extended layout when needed and make
-  the selected monitor primary before or while claiming the keyboard
+- **WHEN** the external display is parked
+- **THEN** the display SHALL remain physically online for the monitor KVM and USB
+  hub, while it is excluded from this Mac's active desktop
 
-#### Scenario: No display can be mirrored
+#### Scenario: Mac becomes active again
 
-- **WHEN** the selected display has disappeared, the displays are already
-  mirrored, or no active built-in display is available
-- **THEN** the keyboard release SHALL proceed without attempting a mirror and the
-  UI SHALL not report a false display-protection success
+- **WHEN** the selected display and USB hub are online and present locally
+- **THEN** getkbd SHALL enable the external display, restore the saved extended
+  layout and display modes, make the external display primary, and then allow
+  the keyboard claim to proceed
 
-#### Scenario: Display restoration fails
+#### Scenario: Closed-lid active use
 
-- **WHEN** getkbd cannot restore the saved display layout or selected primary
-  monitor after a successful keyboard claim
-- **THEN** the UI SHALL show an attention state with a retry or Display Settings
-  recovery path while preserving the keyboard result
+- **WHEN** the Mac has no active built-in display but the selected external display
+  and USB hub are present
+- **THEN** getkbd SHALL allow the external display to remain enabled and SHALL
+  not require mirroring
 
-### Requirement: Report display handoff progress
+#### Scenario: Display parking is unavailable
 
-The system SHALL expose user-readable display handoff states for preparing,
-protected, restoring, restored, and attention-required outcomes.
+- **WHEN** the private display-enable operation is unavailable or fails
+- **THEN** getkbd SHALL still complete the keyboard ownership operation when
+  possible and SHALL expose an attention state with a Display Settings recovery
+  path
 
-#### Scenario: Display handoff is in progress
+#### Scenario: Selected display is offline
 
-- **WHEN** display mirroring or restoration is running
-- **THEN** the menu-bar and guided setup surfaces SHALL identify the current phase
-  instead of showing only a generic Bluetooth operation state
+- **WHEN** the selected display is not online
+- **THEN** getkbd SHALL not attempt display configuration and SHALL not
+  automatically claim the keyboard
 
-#### Scenario: Display handoff completes
+### Requirement: Report display parking progress
 
-- **WHEN** the expected mirror or restored extended layout is verified
-- **THEN** getkbd SHALL clear the transient phase and retain a concise successful
-  status for the current handoff
+The system SHALL expose user-readable display states for parking, parked,
+restoring, restored, and attention-required outcomes.
+
+#### Scenario: Display parking is in progress
+
+- **WHEN** getkbd is enabling or disabling the selected external display
+- **THEN** the menu-bar and settings surfaces SHALL identify the current phase
+
+#### Scenario: Display parking completes
+
+- **WHEN** the expected enabled or parked state is verified
+- **THEN** getkbd SHALL expose the corresponding successful state
 
 ### Requirement: Reconcile ownership changes and retry automatic operations
 
 The system SHALL converge toward the latest desired keyboard state after an
-in-flight operation and SHALL retry eligible automatic failures a limited
-number of times.
+in-flight operation and SHALL retry eligible automatic failures a limited number
+of times.
 
 #### Scenario: Sensor reverses during a claim
 
-- **WHEN** a monitor or KVM event requests release while a claim is in flight
-- **THEN** getkbd SHALL finish the current operation and then reconcile toward
-  the disconnected state
+- **WHEN** the USB hub disappears while a claim is in flight
+- **THEN** getkbd SHALL finish the current operation and then reconcile toward the
+  disconnected state
 
 #### Scenario: Automatic operation fails temporarily
 
-- **WHEN** an eligible automatic claim or release fails while its triggering
-  condition remains valid
+- **WHEN** an automatic claim or release fails while its triggering condition
+  remains valid
 - **THEN** getkbd SHALL retry after a delay, up to two automatic retries, and
   SHALL stop retrying when the condition no longer applies
 
 #### Scenario: Manual action overrides an automatic intent
 
 - **WHEN** Get Keyboard or Release Keyboard is selected
-- **THEN** getkbd SHALL replace pending automatic intent with the requested
-  manual target state
+- **THEN** getkbd SHALL replace the current automatic target with the requested
+  manual target until a subsequent local sensor transition or restart
 
-### Requirement: Preserve and restore ownership across sleep
+### Requirement: Preserve safe behavior across sleep and restart
 
-The system SHALL respond to system sleep and wake notifications according to the
-release-before-sleep setting.
+The system SHALL release the keyboard before sleep, park the external display when
+possible, and re-evaluate local conditions after wake or application restart.
 
-#### Scenario: Release before sleep is enabled
+#### Scenario: Mac prepares to sleep
 
-- **WHEN** the Mac is preparing to sleep and release before sleep is enabled
-- **THEN** getkbd SHALL attempt to release the selected keyboard and clear its
-  active ownership intent
-
-#### Scenario: Release before sleep is disabled
-
-- **WHEN** the Mac is preparing to sleep and release before sleep is disabled
-- **THEN** getkbd SHALL not initiate a sleep-triggered release
+- **WHEN** the Mac is preparing to sleep
+- **THEN** getkbd SHALL release the selected keyboard and cancel pending automatic
+  claims
 
 #### Scenario: Mac wakes
 
 - **WHEN** the Mac wakes
-- **THEN** getkbd SHALL refresh the keyboard state and re-evaluate the current
-  monitor and KVM conditions before deciding whether to reclaim or preserve the
-  connection
+- **THEN** getkbd SHALL refresh the keyboard state and re-evaluate the selected
+  display and USB hub before deciding whether to reclaim the keyboard
+
+#### Scenario: Application quits
+
+- **WHEN** getkbd quits while the external display is parked
+- **THEN** getkbd SHALL restore the external display configuration without
+  releasing the keyboard as a quit side effect
 
 ### Requirement: Change keyboard selection without orphaning the old device
 
-The system SHALL release the currently connected selected keyboard before
-applying a different keyboard selection.
+The system SHALL release the currently connected selected keyboard before applying
+a different keyboard selection.
 
 #### Scenario: Previous keyboard releases successfully
 
 - **WHEN** the selected keyboard is changed while the previous keyboard is
   connected locally
 - **THEN** getkbd SHALL release the previous keyboard, apply the new selection,
-  and evaluate the configured automatic conditions for the new keyboard
+  and evaluate the current local KVM conditions for the new keyboard
 
 #### Scenario: Previous keyboard cannot be released
 
 - **WHEN** release of the previous keyboard fails during a selection change
-- **THEN** getkbd SHALL keep the previous selection, restore its ownership
-  state, and show a user-readable reconfiguration error
+- **THEN** getkbd SHALL keep the previous selection and show a user-readable
+  reconfiguration error
 
-### Requirement: Keep switching local and signal-driven
+### Requirement: Keep ordinary switching local and signal-driven
 
-The system SHALL use local Bluetooth, display, USB, and system lifecycle signals
-for ordinary handoff. Optional peer communication MAY verify setup and report
-status, but SHALL not be required for local manual or automatic switching.
+The system SHALL use only local Bluetooth, USB, display, sleep, and wake signals
+for ordinary automatic and manual handoff. It SHALL not require a network
+connection, paired peer, remote lock, or remote status exchange.
 
 #### Scenario: Network is unavailable
 
-- **WHEN** the Mac has no network connectivity or the peer is unavailable
-- **THEN** local manual and automatic handoff behavior SHALL not depend on the
-  peer connection
-
-#### Scenario: Peer verification becomes stale
-
-- **WHEN** a paired peer stops responding during or after setup
-- **THEN** getkbd SHALL mark peer verification stale without changing an already
-  local ownership decision solely because of the stale state
+- **WHEN** the Mac has no network connectivity
+- **THEN** local manual and automatic handoff behavior SHALL continue normally

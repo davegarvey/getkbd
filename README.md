@@ -1,17 +1,16 @@
 # getkbd
 
-Move one Apple Magic Keyboard between two Macs using an external monitor, a monitor KVM,
-or a manual shortcut. getkbd watches display and USB connection state; it does not read
-keyboard or mouse input and does not use the network.
+Move one Apple Magic Keyboard between two Macs using the USB signal from a BenQ monitor KVM.
+getkbd watches local display, USB, Bluetooth, and system state. It does not read keyboard or
+mouse input and does not use the network.
 
 ## Requirements
 
 - Two Macs running macOS 26 or later
-- Apple Magic Keyboard
-- External monitor
+- Apple Magic Keyboard paired with both Macs
+- BenQ MA270S, or a monitor KVM with a USB hub that appears only on the selected Mac
+- BenQ Display Pilot 2 installed on both Macs for software input switching
 - Xcode Command Line Tools on each Mac
-
-For KVM USB switching, the monitor must expose a USB hub that appears on only the active Mac.
 
 The default build is ad-hoc signed and does not require an Apple Developer account.
 
@@ -32,71 +31,72 @@ If macOS blocks the app, Control-click it, choose **Open**, and confirm.
 
 ## Setup
 
-1. Open **System Settings > Bluetooth** and pair the keyboard with each Mac.
+1. Pair the Apple Magic Keyboard with both Macs in **System Settings > Bluetooth**.
 2. Launch getkbd on both Macs.
-3. Open **Settings** and select the same keyboard on both Macs.
-4. Select the external display used by the desk.
-5. Choose an automatic source:
-   - **Monitor connection** when the display cable is connected to only one Mac at a time.
-   - **KVM USB hub connection** when the monitor is connected to both Macs and its USB hub
-     appears only on the active Mac.
-   - **Manual only** to switch from the menu bar or shortcut.
-6. For KVM USB hub connection, switch the KVM to the Mac being configured, click **Identify KVM Hub**,
-   and switch the KVM away and back. Confirm the hub that changes connection state.
-7. Repeat the settings on the other Mac. Use **Refresh Keyboard, Monitor, and USB Hub Lists**
-   whenever a device is missing.
+3. Open **Settings** and select the same keyboard and external BenQ display on both Macs.
+4. Select the USB hub connected through the monitor KVM on each Mac.
+5. If the hub is difficult to identify, click **Identify input signal**, change the BenQ input,
+   and let getkbd select the hub whose connection changes.
+6. Repeat the setup on the other Mac.
+
+The selected hub must appear on only the Mac currently selected by the BenQ input. No pairing,
+network connection, or coordination between the two getkbd instances is required.
 
 ## Use
 
-For monitor switching, leave getkbd running on both Macs. Disconnecting the configured monitor
-releases the keyboard; connecting it to the other Mac claims the keyboard there.
+1. Leave getkbd running on both Macs.
+2. Change the BenQ input with Display Pilot 2 or the monitor controls.
+3. The Mac where the selected USB hub appears claims the keyboard.
+4. The Mac where the hub disappears releases the keyboard and parks its external display.
 
-For monitor switching:
+The selected display is a safety condition. If it is physically absent, getkbd releases the
+keyboard and will not automatically claim it. If both Macs see the selected hub, the hardware
+does not expose a unique active-host signal and automatic switching is not safe.
 
-1. Connect the display cable to the Mac you want to use.
-2. getkbd claims the keyboard when the selected display appears and releases it when the display disappears.
+## Display behavior
 
-For KVM USB hub switching:
+The inactive Mac does not mirror its laptop display onto the shared monitor. Instead, getkbd
+temporarily disables the external display in macOS so the inactive Mac has a laptop-only desktop.
+This lets macOS move windows off the unavailable monitor without forcing either display to use the
+other display's scaling or resolution.
 
-1. Connect the monitor's USB upstream ports to both Macs.
-2. Select **KVM USB hub connection** on both Macs.
-3. Leave getkbd running on both Macs.
-4. Switch the KVM. The Mac where the selected USB hub appears claims the keyboard; the Mac where
-   it disappears releases it.
+When the hub appears again, getkbd re-enables the external display, restores the saved extended
+layout and display mode, and makes the external display primary. The display remains physically
+connected while parked, so the KVM USB hub and monitor input controls remain available.
 
-The selected monitor is a safety condition in KVM mode. If either the monitor or selected hub is
-absent, getkbd releases the selected keyboard. If both Macs see the selected hub at the same time,
-the KVM does not expose a unique active-host signal and automatic switching is unsafe.
+Display parking uses the private `CGSConfigureDisplayEnabled` CoreGraphics entry point because
+macOS does not provide a public display-disable API. If macOS cannot park or restore the display,
+the keyboard operation still completes and the menu bar offers a Display Settings recovery path.
 
-When getkbd releases the keyboard while the selected external display remains attached, for example
-through a KVM, it temporarily mirrors the built-in display onto the selected monitor. Before doing
-so, it makes the laptop the primary display and mirror master, so the laptop keeps its native
-scaling and windows do not move to the shared display while this Mac is inactive. getkbd stores the
-current extended layout and display modes, then restores them when this Mac becomes active again,
-unmirrors the displays, and restores the selected monitor as the primary display.
-If the display has already disappeared, or the laptop is in closed-lid mode without a built-in
-display available, there is no local display to mirror and the release proceeds normally.
+Closed-lid use is supported when the external display is active. If the display cable is removed,
+or the Mac sleeps, getkbd releases the keyboard and reevaluates all local signals after wake.
 
-For manual switching:
+## Manual switching
 
-1. Choose **Release Keyboard** on the Mac currently using the keyboard.
-2. Choose **Get Keyboard** on the other Mac.
+- Choose **Release Keyboard** on the Mac currently using the keyboard.
+- Choose **Get Keyboard** on the other Mac.
+- Use the configured global shortcut to get the keyboard manually.
 
-Keep the keyboard awake during pairing. If getkbd shows a passkey, type it on the keyboard and press
-Return.
+Keep the keyboard awake during pairing. If getkbd shows a passkey, type it on the keyboard and
+press Return.
 
 ## Controls
 
 - **Get Keyboard**: claim the selected keyboard.
 - **Release Keyboard**: release the selected keyboard.
-- **Settings**: change the keyboard, monitor, USB hub, automatic source, behaviour, and shortcut.
-- **Refresh Keyboard, Monitor, and USB Hub Lists**: reload available devices.
+- **Settings**: change the selected keyboard, display, USB hub, shortcut, and launch-at-login
+  preference.
+- **Identify input signal**: locally detect the USB connection that follows the BenQ input.
+- **Refresh device lists**: reload available keyboards, displays, and USB hubs.
 
 ## Troubleshooting
 
 - Pair the keyboard with both Macs before using getkbd.
+- Select the physical USB hub that appears only when that Mac is active, not a HID device that
+  remains connected on both Macs.
+- If the display is parked but cannot be restored, open **Display Settings** and re-enable it;
+  then use **Retry Display Layout** from the getkbd menu.
 - Wake or power-cycle the keyboard if pairing fails.
-- Both Macs must be running getkbd for independent monitor/USB state handling.
-- In KVM mode, select the physical USB hub that appears only when that Mac is active, not a
-  virtual HID device that remains connected on both Macs.
-- The built-in **Launch getkbd at login** option requires a signed build and will not work with the default ad-hoc signature.
+- Both Macs must be running getkbd for automatic local handoff.
+- The built-in **Launch getkbd at login** option requires a signed build and will not work with
+  the default ad-hoc signature.

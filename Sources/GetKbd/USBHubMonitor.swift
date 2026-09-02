@@ -11,6 +11,7 @@ final class USBHubMonitor {
 
     var onChange: ((Bool) -> Void)?
     var onDevicesChanged: (() -> Void)?
+    var debounceInterval: TimeInterval = 0.35
     private(set) var isPresent = false
 
     var availableHubs: [USBHubDescriptor] {
@@ -31,6 +32,8 @@ final class USBHubMonitor {
     private var matchingIterator: io_iterator_t = 0
     private var terminatedIterator: io_iterator_t = 0
     private var isStarted = false
+    private var rawPresence = false
+    private var presenceTask: Task<Void, Never>?
 
     init(configuredHubIdentifier: String?) {
         self.configuredHubIdentifier = configuredHubIdentifier
@@ -118,6 +121,9 @@ final class USBHubMonitor {
         self.notificationSource = nil
         self.notificationPort = nil
         connectedHubs.removeAll()
+        presenceTask?.cancel()
+        presenceTask = nil
+        rawPresence = false
         isPresent = false
         isStarted = false
     }
@@ -148,15 +154,33 @@ final class USBHubMonitor {
             connectedHubs.values.contains { $0.identifier == identifier }
         } ?? false
 
-        guard newValue != isPresent else { return }
-        isPresent = newValue
-        guard notify else { return }
+        guard newValue != rawPresence || (!notify && newValue != isPresent) else { return }
+        rawPresence = newValue
 
-        GetKbdLog.event(
-            newValue ? "usb.hub.connected" : "usb.hub.disconnected",
-            configuredHubIdentifier ?? "none"
-        )
-        onChange?(newValue)
+        guard notify else {
+            isPresent = newValue
+            return
+        }
+
+        presenceTask?.cancel()
+        let delay = UInt64(max(0, debounceInterval) * 1_000_000_000)
+        presenceTask = Task { @MainActor [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: delay)
+            }
+            guard !Task.isCancelled, let self else {
+                return
+            }
+
+            self.presenceTask = nil
+            guard self.rawPresence != self.isPresent else { return }
+            self.isPresent = self.rawPresence
+            GetKbdLog.event(
+                self.isPresent ? "usb.hub.connected" : "usb.hub.disconnected",
+                self.configuredHubIdentifier ?? "none"
+            )
+            self.onChange?(self.isPresent)
+        }
     }
 
     private static let deviceMatched: IOServiceMatchingCallback = { context, iterator in
