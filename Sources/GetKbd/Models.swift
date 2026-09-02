@@ -49,32 +49,6 @@ enum OwnershipReason: String, Codable, Equatable, Sendable {
     }
 }
 
-enum DisplayParkingState: String, Codable, Equatable, Sendable {
-    case idle
-    case parking
-    case parked
-    case restoring
-    case restored
-    case attentionRequired
-
-    var menuTitle: String {
-        switch self {
-        case .idle:
-            return "Display is not parked"
-        case .parking:
-            return "Parking external display..."
-        case .parked:
-            return "External display parked"
-        case .restoring:
-            return "Restoring display layout..."
-        case .restored:
-            return "Extended display restored"
-        case .attentionRequired:
-            return "Display layout needs attention"
-        }
-    }
-}
-
 enum DesiredKeyboardState: String, Equatable, Sendable {
     case connected
     case disconnected
@@ -263,8 +237,6 @@ struct OwnershipSnapshot: Equatable, Sendable {
     let usbHubPresent: Bool
     let isBusy: Bool
     let errorMessage: String?
-    let displayParkingState: DisplayParkingState
-    let displayParkingError: String?
 
     init(
         keyboardState: KeyboardConnectionState,
@@ -272,9 +244,7 @@ struct OwnershipSnapshot: Equatable, Sendable {
         monitorPresent: Bool,
         usbHubPresent: Bool,
         isBusy: Bool,
-        errorMessage: String?,
-        displayParkingState: DisplayParkingState = .idle,
-        displayParkingError: String? = nil
+        errorMessage: String?
     ) {
         self.keyboardState = keyboardState
         self.ownershipReason = ownershipReason
@@ -282,7 +252,5 @@ struct OwnershipSnapshot: Equatable, Sendable {
         self.usbHubPresent = usbHubPresent
         self.isBusy = isBusy
         self.errorMessage = errorMessage
-        self.displayParkingState = displayParkingState
-        self.displayParkingError = displayParkingError
     }
 }

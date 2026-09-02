@@ -3,24 +3,21 @@ import XCTest
 
 @MainActor
 final class OwnershipControllerTests: XCTestCase {
-    func testInactiveStartupParksDisplayEvenWhenKeyboardIsDisconnected() async {
+    func testInactiveStartupDoesNotClaimKeyboard() async {
         let keyboard = FakeKeyboardController()
-        let display = FakeDisplayParkingController()
-        let controller = OwnershipController(keyboard: keyboard, display: display)
+        let controller = OwnershipController(keyboard: keyboard)
 
         controller.start(monitorPresent: true, usbHubPresent: false)
         await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.connectCallCount, 0)
         XCTAssertEqual(keyboard.disconnectCallCount, 0)
-        XCTAssertEqual(display.events, [.park])
-        XCTAssertEqual(controller.snapshot.displayParkingState, .parked)
+        XCTAssertTrue(controller.snapshot.monitorPresent)
     }
 
-    func testHubPresenceClaimsKeyboardAndRestoresDisplay() async {
+    func testHubPresenceClaimsKeyboard() async {
         let keyboard = FakeKeyboardController()
-        let display = FakeDisplayParkingController()
-        let controller = OwnershipController(keyboard: keyboard, display: display)
+        let controller = OwnershipController(keyboard: keyboard)
 
         controller.start(monitorPresent: true, usbHubPresent: false)
         controller.usbHubConnected()
@@ -29,14 +26,12 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(keyboard.connectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
         XCTAssertEqual(controller.snapshot.ownershipReason, .usbHub)
-        XCTAssertEqual(display.events, [.park, .restore])
     }
 
-    func testHubLossReleasesKeyboardAndParksDisplay() async {
+    func testHubLossReleasesKeyboardWithoutChangingDisplay() async {
         let keyboard = FakeKeyboardController()
         keyboard.currentState = .connectedLocal
-        let display = FakeDisplayParkingController()
-        let controller = OwnershipController(keyboard: keyboard, display: display)
+        let controller = OwnershipController(keyboard: keyboard)
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         await controller.waitForIdle()
@@ -48,26 +43,22 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(keyboard.disconnectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
         XCTAssertEqual(controller.snapshot.ownershipReason, .none)
-        XCTAssertEqual(display.events, [.park])
     }
 
     func testMissingMonitorIsAClaimSafetyCondition() async {
         let keyboard = FakeKeyboardController()
-        let display = FakeDisplayParkingController()
-        let controller = OwnershipController(keyboard: keyboard, display: display)
+        let controller = OwnershipController(keyboard: keyboard)
 
         controller.start(monitorPresent: false, usbHubPresent: true)
         await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.connectCallCount, 0)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(display.events, [.park])
     }
 
-    func testManualClaimWorksWithoutAutomaticSignal() async {
+    func testManualClaimWorksWithoutAutomaticSignalAndLeavesDisplayAlone() async {
         let keyboard = FakeKeyboardController()
-        let display = FakeDisplayParkingController()
-        let controller = OwnershipController(keyboard: keyboard, display: display)
+        let controller = OwnershipController(keyboard: keyboard)
 
         controller.start(monitorPresent: false, usbHubPresent: false)
         controller.manualClaim()
@@ -76,14 +67,12 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(keyboard.connectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
         XCTAssertEqual(controller.snapshot.ownershipReason, .manual)
-        XCTAssertEqual(display.events, [.park, .restore])
     }
 
-    func testSleepReleasesKeyboardAndParksDisplay() async {
+    func testSleepReleasesKeyboardWithoutChangingDisplay() async {
         let keyboard = FakeKeyboardController()
         keyboard.currentState = .connectedLocal
-        let display = FakeDisplayParkingController()
-        let controller = OwnershipController(keyboard: keyboard, display: display)
+        let controller = OwnershipController(keyboard: keyboard)
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         await controller.waitForIdle()
@@ -94,14 +83,12 @@ final class OwnershipControllerTests: XCTestCase {
 
         XCTAssertEqual(keyboard.disconnectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(display.events, [.park])
     }
 
     func testSignalReversalDuringClaimIsReconciledAfterClaimCompletes() async {
         let keyboard = FakeKeyboardController()
         keyboard.blockNextConnect = true
-        let display = FakeDisplayParkingController()
-        let controller = OwnershipController(keyboard: keyboard, display: display)
+        let controller = OwnershipController(keyboard: keyboard)
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         await keyboard.waitUntilConnectIsBlocked()
@@ -113,7 +100,6 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(keyboard.connectCallCount, 1)
         XCTAssertEqual(keyboard.disconnectCallCount, 1)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
-        XCTAssertEqual(display.events, [.restore, .park])
     }
 }
 
@@ -183,33 +169,5 @@ private final class FakeKeyboardController: KeyboardControlling {
 
     private func notify() {
         onStateChange?(currentState)
-    }
-}
-
-@MainActor
-private final class FakeDisplayParkingController: DisplayParkingControlling {
-    enum Event: Equatable {
-        case park
-        case restore
-    }
-
-    var events: [Event] = []
-    var parkingState: DisplayParkingState = .restored
-    var parkingError: String?
-    var onStateChange: (() -> Void)?
-    var isPresent = true
-
-    func park() {
-        guard parkingState != .parked else { return }
-        events.append(.park)
-        parkingState = .parked
-        onStateChange?()
-    }
-
-    func restore() {
-        guard parkingState != .restored else { return }
-        events.append(.restore)
-        parkingState = .restored
-        onStateChange?()
     }
 }

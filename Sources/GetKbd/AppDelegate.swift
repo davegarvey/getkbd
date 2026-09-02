@@ -22,8 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displayMonitor = DisplayMonitor(configuredDisplayIdentifier: settings.selectedDisplay?.identifier)
         usbHubMonitor = USBHubMonitor(configuredHubIdentifier: settings.selectedUSBHub?.identifier)
         ownershipController = OwnershipController(
-            keyboard: keyboardController,
-            display: displayMonitor
+            keyboard: keyboardController
         )
 
         menuBarController = MenuBarController(
@@ -52,9 +51,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 self?.ownershipController.monitorDisconnected()
             }
-        }
-        displayMonitor.onStateChange = { [weak self] in
-            self?.ownershipController.displayStateChanged()
         }
         usbHubMonitor.onChange = { [weak self] isPresent in
             if isPresent {
@@ -106,7 +102,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        displayMonitor.restore()
         sleepMonitor.stop()
         displayMonitor.stop()
         usbHubMonitor.stop()
@@ -147,7 +142,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsStore.replace(effectiveSettings)
 
         if previous.selectedDisplay?.identifier != effectiveSettings.selectedDisplay?.identifier {
-            displayMonitor.restore()
             displayMonitor.configuredDisplayIdentifier = effectiveSettings.selectedDisplay?.identifier
         }
         if previous.selectedUSBHub?.identifier != effectiveSettings.selectedUSBHub?.identifier {

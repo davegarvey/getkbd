@@ -80,16 +80,6 @@ final class SettingsViewModel: ObservableObject {
     }
 
     var readiness: SettingsReadiness {
-        if latestSnapshot?.displayParkingState == .attentionRequired,
-           let error = latestSnapshot?.displayParkingError {
-            return SettingsReadiness(
-                title: "Display needs attention",
-                detail: error,
-                systemImage: "exclamationmark.triangle.fill",
-                tone: .critical,
-                isReady: false
-            )
-        }
         guard settings.selectedKeyboard != nil else {
             return SettingsReadiness(
                 title: "Choose the shared keyboard",
@@ -151,19 +141,10 @@ final class SettingsViewModel: ObservableObject {
     }
 
     var displayStatusText: String {
-        let connection = displayIsPresent ? "Connected" : "Not connected"
-        guard let state = latestSnapshot?.displayParkingState,
-              state != .idle,
-              state != .restored else {
-            return connection
-        }
-        return "\(connection) | \(state.menuTitle)"
+        displayIsPresent ? "Connected" : "Not connected"
     }
 
     var displayTone: StatusTone {
-        if latestSnapshot?.displayParkingState == .attentionRequired {
-            return .critical
-        }
         return displayIsPresent ? .positive : .warning
     }
 
@@ -329,10 +310,6 @@ final class SettingsViewModel: ObservableObject {
         } else {
             ownership.manualClaim()
         }
-    }
-
-    func retryDisplayLayout() {
-        ownership.retryDisplayParking()
     }
 
     func openBluetoothSettings() {

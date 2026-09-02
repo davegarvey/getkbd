@@ -3,7 +3,6 @@ import Foundation
 @MainActor
 final class OwnershipController {
     private let keyboard: KeyboardControlling
-    private let display: DisplayParkingControlling?
 
     private(set) var snapshot: OwnershipSnapshot
     private(set) var desiredState: DesiredKeyboardState?
@@ -32,19 +31,8 @@ final class OwnershipController {
         !isSleeping && monitorPresent && usbHubPresent
     }
 
-    private var displayShouldBeRestored: Bool {
-        if let manualTarget {
-            return manualTarget == .connected
-        }
-        return automaticClaimReady
-    }
-
-    init(
-        keyboard: KeyboardControlling,
-        display: DisplayParkingControlling? = nil
-    ) {
+    init(keyboard: KeyboardControlling) {
         self.keyboard = keyboard
-        self.display = display
         snapshot = OwnershipSnapshot(
             keyboardState: keyboard.state,
             ownershipReason: .none,
@@ -54,9 +42,6 @@ final class OwnershipController {
             errorMessage: nil
         )
 
-        display?.onStateChange = { [weak self] in
-            self?.publish()
-        }
         keyboard.onStateChange = { [weak self] _ in
             self?.keyboardStateChanged()
         }
@@ -132,7 +117,6 @@ final class OwnershipController {
         cancelAutomaticAttempts()
         desiredState = .disconnected
         ownershipReason = .none
-        syncDisplay()
         publish()
         reconcile(force: true, immediate: true)
     }
@@ -147,15 +131,6 @@ final class OwnershipController {
         updateIntent()
         publish()
         reconcile(force: true, immediate: false)
-    }
-
-    func displayStateChanged() {
-        publish()
-    }
-
-    func retryDisplayParking() {
-        syncDisplay()
-        publish()
     }
 
     func keyboardStateChanged() {
@@ -190,7 +165,7 @@ final class OwnershipController {
             failedDesiredState = nil
             lastError = nil
             publish()
-            beginOperation(for: .disconnected, syncDisplay: false)
+            beginOperation(for: .disconnected)
         } else if !operationInProgress {
             applyPendingKeyboardConfiguration()
         }
@@ -234,8 +209,6 @@ final class OwnershipController {
         if !hasPendingKeyboardConfiguration {
             updateIntent()
         }
-        syncDisplay()
-
         guard let desiredState else { return }
 
         switch desiredState {
@@ -249,7 +222,7 @@ final class OwnershipController {
             guard force || failedDesiredState != .connected else { return }
 
             if immediate || manualTarget != nil {
-                beginOperation(for: .connected, syncDisplay: false)
+                beginOperation(for: .connected)
             } else {
                 scheduleUSBHubClaim()
             }
@@ -258,16 +231,13 @@ final class OwnershipController {
             cancelUSBHubClaim()
             guard keyboard.state == .connectedLocal else { return }
             guard force || failedDesiredState != .disconnected else { return }
-            beginOperation(for: .disconnected, syncDisplay: false)
+            beginOperation(for: .disconnected)
         }
     }
 
-    private func beginOperation(for target: DesiredKeyboardState, syncDisplay: Bool) {
+    private func beginOperation(for target: DesiredKeyboardState) {
         guard !operationInProgress else { return }
 
-        if syncDisplay {
-            self.syncDisplay()
-        }
         operationInProgress = true
         lastError = nil
         publish()
@@ -303,7 +273,7 @@ final class OwnershipController {
                 ownershipReason = .none
                 failedDesiredState = nil
                 lastError = nil
-                beginOperation(for: .disconnected, syncDisplay: false)
+                beginOperation(for: .disconnected)
             } else {
                 applyPendingKeyboardConfiguration()
             }
@@ -356,19 +326,6 @@ final class OwnershipController {
         updateIntent()
         publish()
         onKeyboardReconfigurationFailure?(message)
-    }
-
-    private func syncDisplay() {
-        if isSleeping {
-            display?.park()
-            return
-        }
-
-        if displayShouldBeRestored {
-            display?.restore()
-        } else {
-            display?.park()
-        }
     }
 
     private func scheduleUSBHubClaim() {
@@ -451,9 +408,7 @@ final class OwnershipController {
             monitorPresent: monitorPresent,
             usbHubPresent: usbHubPresent,
             isBusy: operationInProgress,
-            errorMessage: lastError,
-            displayParkingState: display?.parkingState ?? .idle,
-            displayParkingError: display?.parkingError
+            errorMessage: lastError
         )
         onChange?(snapshot)
     }
