@@ -74,30 +74,30 @@ the selected display to be online, and the selected USB hub to be present locall
 ### Requirement: Park the external display without mirroring
 
 When the automatic target is inactive and the selected external display remains
-online, getkbd SHALL disable that display in the local WindowServer desktop rather
-than mirror it with another display. getkbd SHALL retain the active extended
-layout and display modes for restoration. Parking SHALL not select a new display
-mode or inherit scaling from another display.
+online, getkbd SHALL keep the display signal online and cover its local desktop
+with a temporary opaque window rather than mirror it with another display. getkbd
+SHALL retain the active extended layout and display modes for restoration. Parking
+SHALL not select a new display mode or inherit scaling from another display.
 
 #### Scenario: Inactive Mac still sees the external display
 
 - **WHEN** the selected USB hub disappears while the external display remains
   physically online
 - **THEN** getkbd SHALL park the external display even if the keyboard is already
-  disconnected, so macOS can re-home windows onto the laptop display
+  disconnected, without disabling its video signal
 
 #### Scenario: Display is parked
 
 - **WHEN** the external display is parked
-- **THEN** the display SHALL remain physically online for the monitor KVM and USB
-  hub, while it is excluded from this Mac's active desktop
+- **THEN** the display SHALL remain physically online and actively signaled for
+  the monitor KVM and USB hub, while its local desktop is covered
 
 #### Scenario: Mac becomes active again
 
 - **WHEN** the selected display and USB hub are online and present locally
-- **THEN** getkbd SHALL enable the external display, restore the saved extended
-  layout and display modes, make the external display primary, and then allow
-  the keyboard claim to proceed
+- **THEN** getkbd SHALL remove the desktop cover, restore the saved extended layout
+  and display modes, make the external display primary, and then allow the keyboard
+  claim to proceed
 
 #### Scenario: Closed-lid active use
 
@@ -108,7 +108,7 @@ mode or inherit scaling from another display.
 
 #### Scenario: Display parking is unavailable
 
-- **WHEN** the private display-enable operation is unavailable or fails
+- **WHEN** the display cannot be covered or restored
 - **THEN** getkbd SHALL still complete the keyboard ownership operation when
   possible and SHALL expose an attention state with a Display Settings recovery
   path

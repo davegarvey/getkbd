@@ -1,6 +1,5 @@
 import AppKit
 import CoreGraphics
-import Darwin
 import Foundation
 
 @MainActor
@@ -72,12 +71,6 @@ final class DisplayMonitor: DisplayParkingControlling {
         let displays: [DisplayState]
     }
 
-    private typealias ConfigureDisplayEnabledFunction = @convention(c) (
-        CGDisplayConfigRef?,
-        CGDirectDisplayID,
-        Bool
-    ) -> CGError
-
     var configuredDisplayIdentifier: String? {
         didSet {
             scheduleEvaluation()
@@ -96,6 +89,7 @@ final class DisplayMonitor: DisplayParkingControlling {
     private var debounceTask: Task<Void, Never>?
     private var displayCallbackRegistered = false
     private var savedConfiguration: SavedDisplayConfiguration?
+    private var parkingWindow: NSWindow?
 
     init(configuredDisplayIdentifier: String?, debounceInterval: TimeInterval = 1.5) {
         self.configuredDisplayIdentifier = configuredDisplayIdentifier
@@ -137,17 +131,26 @@ final class DisplayMonitor: DisplayParkingControlling {
         }
         debounceTask?.cancel()
         debounceTask = nil
+        hideParkingWindow()
     }
 
     func park() {
-        guard let displayID = configuredDisplayID() else {
+        guard let displayID = onlineConfiguredDisplayID(),
+              CGDisplayIsBuiltin(displayID) == 0 else {
             savedConfiguration = nil
             updateParkingState(.idle)
             return
         }
 
-        if CGDisplayIsActive(displayID) == 0 {
-            updateParkingState(.parked)
+        guard CGDisplayIsActive(displayID) != 0 else {
+            updateParkingState(
+                .attentionRequired,
+                error: "The selected external display is disabled. Re-enable it in Display Settings before continuing."
+            )
+            return
+        }
+
+        if parkingState == .parked, parkingWindow != nil {
             return
         }
 
@@ -169,24 +172,16 @@ final class DisplayMonitor: DisplayParkingControlling {
             return
         }
 
-        guard setDisplayEnabled(displayID, enabled: false) else {
+        guard showParkingWindow(for: displayID) else {
             updateParkingState(
                 .attentionRequired,
-                error: "Unable to park the external display on this Mac."
-            )
-            return
-        }
-
-        guard CGDisplayIsActive(displayID) == 0 else {
-            updateParkingState(
-                .attentionRequired,
-                error: "The external display did not become inactive."
+                error: "Unable to cover the external display while parking it."
             )
             return
         }
 
         updateParkingState(.parked)
-        GetKbdLog.event("display.parked", "display=\(displayID)")
+        GetKbdLog.event("display.parked", "display=\(displayID), signal=retained")
     }
 
     func restore() {
@@ -203,6 +198,7 @@ final class DisplayMonitor: DisplayParkingControlling {
         }
 
         updateParkingState(.restoring)
+        hideParkingWindow()
 
         guard removeMirroringIfNeeded(for: displayID) else {
             updateParkingState(
@@ -210,17 +206,6 @@ final class DisplayMonitor: DisplayParkingControlling {
                 error: "Unable to remove display mirroring before restoring the external display."
             )
             return
-        }
-
-        if CGDisplayIsActive(displayID) == 0 {
-            guard setDisplayEnabled(displayID, enabled: true),
-                  CGDisplayIsActive(displayID) != 0 else {
-                updateParkingState(
-                    .attentionRequired,
-                    error: "Unable to restore the external display on this Mac."
-                )
-                return
-            }
         }
 
         let restored = if let savedConfiguration {
@@ -300,6 +285,10 @@ final class DisplayMonitor: DisplayParkingControlling {
     }
 
     private func configuredDisplayID() -> CGDirectDisplayID? {
+        onlineConfiguredDisplayID()
+    }
+
+    private func onlineConfiguredDisplayID() -> CGDirectDisplayID? {
         configuredDisplayID(in: Self.currentOnlineDisplayIDs())
     }
 
@@ -347,43 +336,6 @@ final class DisplayMonitor: DisplayParkingControlling {
             GetKbdLog.error(
                 "display.unmirror.failed",
                 "Unable to remove display mirroring (CGError \(result.rawValue))"
-            )
-            return false
-        }
-
-        return true
-    }
-
-    private func setDisplayEnabled(_ displayID: CGDirectDisplayID, enabled: Bool) -> Bool {
-        guard let configureDisplayEnabled = Self.configureDisplayEnabledFunction() else {
-            GetKbdLog.error(
-                "display.enable.failed",
-                "CGSConfigureDisplayEnabled is not available"
-            )
-            return false
-        }
-
-        var configuration: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&configuration) == .success,
-              let configuration else {
-            return false
-        }
-
-        let configureResult = configureDisplayEnabled(configuration, displayID, enabled)
-        guard configureResult == .success else {
-            _ = CGCancelDisplayConfiguration(configuration)
-            GetKbdLog.error(
-                "display.enable.failed",
-                "Unable to set display enabled=\(enabled) (CGError \(configureResult.rawValue))"
-            )
-            return false
-        }
-
-        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
-        guard completeResult == .success else {
-            GetKbdLog.error(
-                "display.enable.failed",
-                "Unable to apply display enabled=\(enabled) (CGError \(completeResult.rawValue))"
             )
             return false
         }
@@ -525,12 +477,43 @@ final class DisplayMonitor: DisplayParkingControlling {
         onStateChange?()
     }
 
+    private func showParkingWindow(for displayID: CGDirectDisplayID) -> Bool {
+        let frame = NSScreen.screens.first { $0.cgDirectDisplayID == displayID }?.frame
+            ?? CGDisplayBounds(displayID)
 
-    private static func configureDisplayEnabledFunction() -> ConfigureDisplayEnabledFunction? {
-        guard let handle = dlopen(nil, RTLD_LAZY) else { return nil }
-        defer { dlclose(handle) }
-        guard let symbol = dlsym(handle, "CGSConfigureDisplayEnabled") else { return nil }
-        return unsafeBitCast(symbol, to: ConfigureDisplayEnabledFunction.self)
+        guard !frame.isEmpty else { return false }
+
+        if let parkingWindow {
+            parkingWindow.setFrame(frame, display: true)
+            parkingWindow.orderFrontRegardless()
+            return true
+        }
+
+        let window = NSWindow(
+            contentRect: frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = true
+        window.backgroundColor = .black
+        window.hasShadow = false
+        window.level = .screenSaver
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        window.ignoresMouseEvents = true
+
+        let view = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.black.cgColor
+        window.contentView = view
+        window.orderFrontRegardless()
+        parkingWindow = window
+        return true
+    }
+
+    private func hideParkingWindow() {
+        parkingWindow?.orderOut(nil)
+        parkingWindow = nil
     }
 
     private static func currentOnlineDisplayIDs() -> [CGDirectDisplayID] {
