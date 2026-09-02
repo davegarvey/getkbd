@@ -18,10 +18,8 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon"),
-                .linkedFramework("ColorSync"),
                 .linkedFramework("IOBluetooth"),
                 .linkedFramework("IOKit"),
-                .linkedFramework("Network"),
                 .linkedFramework("ServiceManagement")
             ]
         ),

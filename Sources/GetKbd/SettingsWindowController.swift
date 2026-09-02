@@ -12,7 +12,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         usbHub: USBHubMonitor,
         display: DisplayMonitor,
         ownership: OwnershipController,
-        peer: PeerVerificationController,
         onChange: @escaping (AppSettings) -> Void
     ) {
         viewModel = SettingsViewModel(
@@ -21,7 +20,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             usbHub: usbHub,
             display: display,
             ownership: ownership,
-            peer: peer,
             onChange: onChange
         )
 
@@ -61,10 +59,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func update(snapshot: OwnershipSnapshot) {
         viewModel.update(snapshot: snapshot)
-    }
-
-    func refreshPeerState() {
-        viewModel.refreshPeerState()
     }
 
     func showMessage(_ message: String) {

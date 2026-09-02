@@ -2,15 +2,15 @@
 
 ## Purpose
 
-Define how getkbd discovers paired keyboards and identifies the selected
-external display and physical KVM USB hub on the local Mac.
+Define how getkbd discovers paired keyboards and identifies the selected external
+display and physical KVM USB hub on the local Mac.
 
 ## Requirements
 
 ### Requirement: Discover paired Bluetooth keyboards
 
-The system SHALL list locally paired Bluetooth devices that identify as a
-keyboard by Bluetooth class or by a name containing "keyboard".
+The system SHALL list locally paired Bluetooth devices that identify as a keyboard
+by Bluetooth class or by a name containing "keyboard".
 
 #### Scenario: Paired keyboard is available
 
@@ -29,42 +29,37 @@ keyboard by Bluetooth class or by a name containing "keyboard".
 - **WHEN** a paired keyboard has an empty name
 - **THEN** getkbd SHALL use its Bluetooth identifier as the display name
 
-### Requirement: Detect the configured external display
+### Requirement: Detect the configured external display while physically online
 
-The system SHALL determine whether the configured display is currently present
-among the local macOS screens and SHALL exclude built-in displays from the
-selectable desk-monitor list.
+The system SHALL determine whether the configured display is online through local
+CoreGraphics display services, including when it has been temporarily disabled
+from the active desktop. Built-in displays SHALL be excluded from the selectable
+desk-display list.
 
-#### Scenario: External display is selected
+#### Scenario: External display is online
 
-- **WHEN** the configured external display appears in the current screen list
+- **WHEN** the configured external display is present in the online display list
 - **THEN** the display condition SHALL be present and getkbd SHALL notify the
-  ownership controller of a monitor connection
+  ownership controller
 
-#### Scenario: Configured display disappears
+#### Scenario: Configured display is physically removed
 
-- **WHEN** the configured external display is no longer in the current screen
-  list
+- **WHEN** the configured external display is no longer online
 - **THEN** the display condition SHALL be absent and getkbd SHALL notify the
-  ownership controller of a monitor disconnection
+  ownership controller
 
 #### Scenario: Display changes settle
 
 - **WHEN** macOS emits screen or display-reconfiguration events in quick
   succession
-- **THEN** getkbd SHALL debounce evaluation using the configured interval,
-  which defaults to 1.5 seconds, before publishing a changed condition
-
-#### Scenario: Built-in display is listed
-
-- **WHEN** getkbd populates the desk-monitor selector
-- **THEN** built-in displays SHALL not be offered as desk-monitor choices
+- **THEN** getkbd SHALL debounce evaluation using the configured interval, which
+  defaults to 1.5 seconds, before publishing a changed physical condition
 
 ### Requirement: Detect physical USB hubs for KVM switching
 
 The system SHALL list connected USB host devices that expose USB device class 9,
-track presence of the selected hub using a stable descriptor, and support local
-or paired verification of a hub transition.
+track presence of the selected hub using a stable descriptor, and debounce its
+presence before notifying ownership logic.
 
 #### Scenario: USB hub is connected
 
@@ -80,9 +75,9 @@ or paired verification of a hub transition.
 
 #### Scenario: Selected hub is removed
 
-- **WHEN** the selected USB hub terminates
-- **THEN** getkbd SHALL mark it absent, refresh the hub list, and notify KVM
-  ownership logic
+- **WHEN** the selected USB hub terminates and remains absent after debounce
+- **THEN** getkbd SHALL mark it absent, refresh the hub list, and notify ownership
+  logic
 
 #### Scenario: Hub has no serial number
 
@@ -90,90 +85,42 @@ or paired verification of a hub transition.
 - **THEN** its identifier SHALL be derived from its vendor, product, name, and
   manufacturer values
 
-#### Scenario: Paired Macs observe a complementary transition
+### Requirement: Identify the selected hub locally
 
-- **WHEN** a paired verification session observes the same stable hub disappear
-  from one Mac and appear on the other during the monitor-input change
-- **THEN** getkbd SHALL report that hub as the verified input-switch signal
+The system SHALL support local before-and-after hub identification without a peer
+service.
 
-### Requirement: Refresh device conditions from local system events
+#### Scenario: Local identification finds exactly one changed hub
+
+- **WHEN** the user starts hub identification and exactly one local hub identifier
+  changes
+- **THEN** getkbd SHALL select that changed hub
+
+#### Scenario: Several hubs change during identification
+
+- **WHEN** more than one hub identifier changes during identification
+- **THEN** getkbd SHALL cancel automatic selection and instruct the user to select
+  the KVM hub manually
+
+#### Scenario: No hub changes during identification
+
+- **WHEN** the user changes the monitor input but no qualifying hub changes
+- **THEN** getkbd SHALL report that no detectable USB signal was found and SHALL
+  offer manual hub selection
+
+### Requirement: Refresh local device conditions from system events
 
 The system SHALL observe local Bluetooth, display, USB, sleep, and wake events
-without requiring a peer service. When a paired peer is available, it SHALL also
-exchange the local state needed for verification without replacing local event
-handling.
+without requiring a peer service or network connection.
 
 #### Scenario: Unrelated Bluetooth device changes
 
 - **WHEN** a Bluetooth device other than the selected keyboard connects or
   disconnects
-- **THEN** getkbd SHALL not change the selected keyboard state because of that
-  event
+- **THEN** getkbd SHALL not change the selected keyboard state
 
 #### Scenario: Device list refresh is requested
 
-- **WHEN** the user chooses Refresh Keyboard, Monitor, and USB Hub Lists
+- **WHEN** the user chooses Refresh device lists
 - **THEN** getkbd SHALL reload the current local keyboard, display, and USB hub
-  choices and presence conditions
-
-#### Scenario: Peer is unavailable
-
-- **WHEN** the paired peer cannot be reached while local devices change
-- **THEN** local lists and presence conditions SHALL continue to update normally
-  and verification SHALL be marked unavailable
-
-#### Scenario: Selected hub is identified interactively
-
-- **WHEN** the user starts KVM hub identification and exactly one hub identifier
-  changes
-- **THEN** getkbd SHALL return that changed hub as a local candidate even when
-  peer verification is unavailable
-
-#### Scenario: Several hubs change during identification
-
-- **WHEN** more than one hub identifier changes during identification
-- **THEN** getkbd SHALL cancel automatic identification and instruct the user to
-  select the KVM hub manually
-
-### Requirement: Identify the selected hub interactively
-
-The system SHALL support local hub identification and SHALL use paired before and
-after observations to verify the result when both Macs are available.
-
-#### Scenario: Local identification finds exactly one changed hub
-
-- **WHEN** the user starts hub identification and exactly one local hub
-  identifier changes
-- **THEN** getkbd SHALL offer that changed hub as the local candidate
-
-#### Scenario: Paired identification confirms one hub
-
-- **WHEN** exactly one stable hub disappears from one paired Mac and appears on
-  the other during the same detection session
-- **THEN** getkbd SHALL select or offer that hub and report the transition as
-  verified
-
-#### Scenario: Several hubs change during identification
-
-- **WHEN** more than one hub identifier changes during identification
-- **THEN** getkbd SHALL cancel automatic selection and instruct the user to
-  select the KVM hub manually
-
-#### Scenario: No hub changes during identification
-
-- **WHEN** the user changes the monitor input but no qualifying hub changes on
-  either Mac
-- **THEN** getkbd SHALL report that no detectable USB signal was found and SHALL
-  offer manual switching or manual hub selection
-
-#### Scenario: Selected hub is identified interactively
-
-- **WHEN** the user starts KVM hub identification and exactly one hub identifier
-  changes
-- **THEN** getkbd SHALL select that changed hub and report the detected hub
-
-#### Scenario: Several hubs change during identification
-
-- **WHEN** more than one hub identifier changes during identification
-- **THEN** getkbd SHALL cancel automatic identification and instruct the user to
-  select the KVM hub manually
+  choices and conditions

@@ -1,21 +1,21 @@
 import AppKit
-import ColorSync
 import CoreGraphics
+import Darwin
 import Foundation
 
 @MainActor
-protocol DisplayHandoffControlling: AnyObject {
-    var hasPendingKeyboardRelease: Bool { get }
-    var handoffState: DisplayHandoffState { get }
-    var handoffError: String? { get }
-    var onHandoffStateChange: (() -> Void)? { get set }
+protocol DisplayParkingControlling: AnyObject {
+    var isPresent: Bool { get }
+    var parkingState: DisplayParkingState { get }
+    var parkingError: String? { get }
+    var onStateChange: (() -> Void)? { get set }
 
-    func prepareForKeyboardRelease()
-    func restoreAfterKeyboardClaim()
+    func park()
+    func restore()
 }
 
 @MainActor
-final class DisplayMonitor: DisplayHandoffControlling {
+final class DisplayMonitor: DisplayParkingControlling {
     private struct DisplayModeState {
         let ioDisplayModeID: Int32
         let width: Int
@@ -69,11 +69,14 @@ final class DisplayMonitor: DisplayHandoffControlling {
     }
 
     private struct SavedDisplayConfiguration {
-        let mirroredDisplayIdentifier: String
-        let mirrorMasterIdentifier: String
-        let restoredMainDisplayIdentifier: String
         let displays: [DisplayState]
     }
+
+    private typealias ConfigureDisplayEnabledFunction = @convention(c) (
+        CGDisplayConfigRef?,
+        CGDirectDisplayID,
+        Bool
+    ) -> CGError
 
     var configuredDisplayIdentifier: String? {
         didSet {
@@ -83,20 +86,16 @@ final class DisplayMonitor: DisplayHandoffControlling {
 
     var debounceInterval: TimeInterval
     var onChange: ((Bool) -> Void)?
-    var onConfigurationChange: (() -> Void)?
-    var onHandoffStateChange: (() -> Void)?
+    var onStateChange: (() -> Void)?
 
     private(set) var isPresent = false
+    private(set) var parkingState: DisplayParkingState = .idle
+    private(set) var parkingError: String?
+
     private var screenObserver: NSObjectProtocol?
     private var debounceTask: Task<Void, Never>?
     private var displayCallbackRegistered = false
-    private var savedExtendedConfiguration: SavedDisplayConfiguration?
-    private(set) var handoffState: DisplayHandoffState = .idle
-    private(set) var handoffError: String?
-
-    var hasPendingKeyboardRelease: Bool {
-        savedExtendedConfiguration != nil
-    }
+    private var savedConfiguration: SavedDisplayConfiguration?
 
     init(configuredDisplayIdentifier: String?, debounceInterval: TimeInterval = 1.5) {
         self.configuredDisplayIdentifier = configuredDisplayIdentifier
@@ -140,540 +139,109 @@ final class DisplayMonitor: DisplayHandoffControlling {
         debounceTask = nil
     }
 
-    func prepareForKeyboardRelease() {
-        updateHandoffState(.preparing)
-
-        if let savedExtendedConfiguration {
-            reapplyMirror(for: savedExtendedConfiguration)
+    func park() {
+        guard let displayID = configuredDisplayID() else {
+            savedConfiguration = nil
+            updateParkingState(.idle)
             return
         }
 
-        let displayIDs = Self.currentDisplayIDs()
-        guard let externalDisplayID = configuredDisplayID(in: displayIDs),
-              CGDisplayIsActive(externalDisplayID) != 0,
-              displayIDs.allSatisfy({ CGDisplayIsInMirrorSet($0) == 0 }),
-              let builtInDisplayID = displayIDs.first(where: {
-                  $0 != externalDisplayID &&
-                      CGDisplayIsBuiltin($0) != 0 &&
-                      CGDisplayIsActive($0) != 0
-              }) else {
-            updateHandoffState(.idle)
+        if CGDisplayIsActive(displayID) == 0 {
+            updateParkingState(.parked)
             return
         }
 
-        let displayStates = displayIDs
-            .filter { CGDisplayIsActive($0) != 0 }
-            .map(DisplayState.init)
+        updateParkingState(.parking)
 
-        // Keep the laptop as the mirror master so its native scaling and desktop remain local.
-        guard makeDisplayPrimary(displayID: builtInDisplayID, onlineDisplayIDs: displayIDs) else {
-            updateHandoffState(
+        if savedConfiguration == nil {
+            savedConfiguration = SavedDisplayConfiguration(
+                displays: Self.currentOnlineDisplayIDs()
+                    .filter { CGDisplayIsActive($0) != 0 }
+                    .map(DisplayState.init)
+            )
+        }
+
+        guard removeMirroringIfNeeded(for: displayID) else {
+            updateParkingState(
                 .attentionRequired,
-                error: "Unable to make the laptop the primary display."
+                error: "Unable to remove display mirroring before parking the external display."
             )
             return
         }
 
-        guard configureMirror(
-            mirroredDisplayID: externalDisplayID,
-            mirrorMasterID: builtInDisplayID
-        ) else {
-            updateHandoffState(
+        guard setDisplayEnabled(displayID, enabled: false) else {
+            updateParkingState(
                 .attentionRequired,
-                error: "Unable to protect the shared display layout."
+                error: "Unable to park the external display on this Mac."
             )
             return
         }
 
-        let savedConfiguration = SavedDisplayConfiguration(
-            mirroredDisplayIdentifier: Self.identifier(for: externalDisplayID),
-            mirrorMasterIdentifier: Self.identifier(for: builtInDisplayID),
-            restoredMainDisplayIdentifier: Self.identifier(for: externalDisplayID),
-            displays: displayStates
-        )
-        if !hasExpectedMirror(
-            mirroredDisplayIdentifier: Self.identifier(for: externalDisplayID),
-            mirrorMasterIdentifier: Self.identifier(for: builtInDisplayID)
-        ) {
-            GetKbdLog.error("display.mirror.failed", "Mirror configuration was not applied completely")
-            rollbackMirror(
-                mirroredDisplayIdentifier: Self.identifier(for: externalDisplayID),
-                mirrorMasterIdentifier: Self.identifier(for: builtInDisplayID)
-            )
-            updateHandoffState(
+        guard CGDisplayIsActive(displayID) == 0 else {
+            updateParkingState(
                 .attentionRequired,
-                error: "The shared display could not be protected."
+                error: "The external display did not become inactive."
             )
             return
         }
 
-        savedExtendedConfiguration = savedConfiguration
-        updateHandoffState(.protected)
-        GetKbdLog.event(
-            "display.mirror.started",
-            "display=\(externalDisplayID), master=\(builtInDisplayID)"
-        )
+        updateParkingState(.parked)
+        GetKbdLog.event("display.parked", "display=\(displayID)")
     }
 
-    private func reapplyMirror(for savedConfiguration: SavedDisplayConfiguration) {
-        updateHandoffState(.preparing)
+    func restore() {
+        guard let displayID = configuredDisplayID() else {
+            savedConfiguration = nil
+            updateParkingState(.idle)
+            return
+        }
 
-        let currentDisplays = Self.currentDisplaysByIdentifier()
-        guard let mirroredDisplayID = currentDisplays[savedConfiguration.mirroredDisplayIdentifier],
-              let mirrorMasterID = currentDisplays[savedConfiguration.mirrorMasterIdentifier],
-              CGDisplayIsActive(mirroredDisplayID) != 0,
-              CGDisplayIsActive(mirrorMasterID) != 0,
-              noUnrelatedMirrorSets(
-                  in: currentDisplays,
-                  mirroredDisplayID: mirroredDisplayID,
-                  mainDisplayID: mirrorMasterID
-              ) else {
-            updateHandoffState(
+        if parkingState == .restored,
+           CGDisplayIsActive(displayID) != 0,
+           CGMainDisplayID() == displayID {
+            return
+        }
+
+        updateParkingState(.restoring)
+
+        guard removeMirroringIfNeeded(for: displayID) else {
+            updateParkingState(
                 .attentionRequired,
-                error: "The shared display changed before it could be protected."
+                error: "Unable to remove display mirroring before restoring the external display."
             )
             return
         }
 
-        let isExpectedMirror = CGDisplayIsInMirrorSet(mirroredDisplayID) != 0 &&
-            CGDisplayMirrorsDisplay(mirroredDisplayID) == mirrorMasterID
-        if isExpectedMirror {
-            guard CGMainDisplayID() == mirrorMasterID else {
-                updateHandoffState(
+        if CGDisplayIsActive(displayID) == 0 {
+            guard setDisplayEnabled(displayID, enabled: true),
+                  CGDisplayIsActive(displayID) != 0 else {
+                updateParkingState(
                     .attentionRequired,
-                    error: "The shared display changed before it could be protected."
+                    error: "Unable to restore the external display on this Mac."
                 )
                 return
             }
-            updateHandoffState(.protected)
-            return
         }
 
-        guard CGDisplayIsInMirrorSet(mirroredDisplayID) == 0,
-              CGDisplayIsInMirrorSet(mirrorMasterID) == 0 else {
-            updateHandoffState(
-                .attentionRequired,
-                error: "The shared display changed before it could be protected."
-            )
-            return
-        }
-
-        guard makeDisplayPrimary(displayID: mirrorMasterID) else {
-            updateHandoffState(
-                .attentionRequired,
-                error: "Unable to make the laptop the primary display."
-            )
-            return
-        }
-
-        guard configureMirror(
-            mirroredDisplayID: mirroredDisplayID,
-            mirrorMasterID: mirrorMasterID
-        ) else {
-            updateHandoffState(
-                .attentionRequired,
-                error: "Unable to protect the shared display layout."
-            )
-            return
-        }
-
-        guard hasExpectedMirror(
-            mirroredDisplayIdentifier: savedConfiguration.mirroredDisplayIdentifier,
-            mirrorMasterIdentifier: savedConfiguration.mirrorMasterIdentifier
-        ) else {
-            GetKbdLog.error("display.mirror.failed", "Mirror reconfiguration was not applied completely")
-            updateHandoffState(
-                .attentionRequired,
-                error: "The shared display could not be protected."
-            )
-            return
-        }
-
-        updateHandoffState(.protected)
-        GetKbdLog.event("display.mirror.reapplied", "display=\(mirroredDisplayID)")
-    }
-
-    private func configureMirror(
-        mirroredDisplayID: CGDirectDisplayID,
-        mirrorMasterID: CGDirectDisplayID
-    ) -> Bool {
-        let displayIDs = Self.currentDisplayIDs()
-        guard displayIDs.contains(mirroredDisplayID),
-              displayIDs.contains(mirrorMasterID),
-              CGDisplayIsActive(mirroredDisplayID) != 0,
-              CGDisplayIsActive(mirrorMasterID) != 0,
-              CGMainDisplayID() == mirrorMasterID,
-              displayIDs.allSatisfy({ CGDisplayIsInMirrorSet($0) == 0 }) else {
-            return false
-        }
-
-        var configuration: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&configuration) == .success,
-              let configuration else {
-            GetKbdLog.error("display.mirror.failed", "Unable to begin display configuration")
-            return false
-        }
-
-        let configureResult = CGConfigureDisplayMirrorOfDisplay(
-            configuration,
-            mirroredDisplayID,
-            mirrorMasterID
-        )
-        guard configureResult == .success else {
-            _ = CGCancelDisplayConfiguration(configuration)
-            GetKbdLog.error(
-                "display.mirror.failed",
-                "Unable to mirror display (CGError \(configureResult.rawValue))"
-            )
-            return false
-        }
-
-        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
-        guard completeResult == .success else {
-            GetKbdLog.error(
-                "display.mirror.failed",
-                "Unable to apply mirror configuration (CGError \(completeResult.rawValue))"
-            )
-            return false
-        }
-
-        return true
-    }
-
-    private func hasExpectedMirror(
-        mirroredDisplayIdentifier: String,
-        mirrorMasterIdentifier: String
-    ) -> Bool {
-        let currentDisplays = Self.currentDisplaysByIdentifier()
-        guard let mirroredDisplayID = currentDisplays[mirroredDisplayIdentifier],
-              let mirrorMasterID = currentDisplays[mirrorMasterIdentifier] else {
-            return false
-        }
-
-        return CGDisplayIsInMirrorSet(mirroredDisplayID) != 0 &&
-            CGDisplayMirrorsDisplay(mirroredDisplayID) == mirrorMasterID
-    }
-
-    private func rollbackMirror(
-        mirroredDisplayIdentifier: String,
-        mirrorMasterIdentifier: String
-    ) {
-        let currentDisplays = Self.currentDisplaysByIdentifier()
-        guard let mirroredDisplayID = currentDisplays[mirroredDisplayIdentifier],
-              let mirrorMasterID = currentDisplays[mirrorMasterIdentifier],
-              CGDisplayIsInMirrorSet(mirroredDisplayID) != 0,
-              CGDisplayMirrorsDisplay(mirroredDisplayID) == mirrorMasterID else {
-            return
-        }
-
-        var configuration: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&configuration) == .success,
-              let configuration else {
-            return
-        }
-
-        let unmirrorResult = CGConfigureDisplayMirrorOfDisplay(
-            configuration,
-            mirroredDisplayID,
-            kCGNullDirectDisplay
-        )
-        guard unmirrorResult == .success else {
-            _ = CGCancelDisplayConfiguration(configuration)
-            return
-        }
-
-        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
-        guard completeResult == .success else {
-            GetKbdLog.error(
-                "display.mirror.failed",
-                "Unable to roll back mirror configuration (CGError \(completeResult.rawValue))"
-            )
-            return
-        }
-
-        GetKbdLog.event("display.mirror.rolled-back")
-    }
-
-    func restoreAfterKeyboardClaim() {
-        guard let savedConfiguration = savedExtendedConfiguration else {
+        let restored = if let savedConfiguration {
+            restoreConfiguration(savedConfiguration)
+        } else {
             makeConfiguredDisplayPrimary()
-            return
         }
 
-        updateHandoffState(.restoring)
-
-        let currentDisplays = Self.currentDisplaysByIdentifier()
-        guard let mirroredDisplayID = currentDisplays[savedConfiguration.mirroredDisplayIdentifier],
-              let mirrorMasterID = currentDisplays[savedConfiguration.mirrorMasterIdentifier],
-              let restoredMainID = currentDisplays[savedConfiguration.restoredMainDisplayIdentifier] else {
-            if configuredDisplayIdentifier != savedConfiguration.restoredMainDisplayIdentifier {
-                savedExtendedConfiguration = nil
-                makeConfiguredDisplayPrimary()
-                updateHandoffState(.idle)
-            } else {
-                updateHandoffState(
-                    .attentionRequired,
-                    error: "The shared display is not available to restore."
-                )
-            }
-            return
-        }
-        guard CGDisplayIsActive(mirroredDisplayID) != 0,
-              CGDisplayIsActive(mirrorMasterID) != 0,
-              CGDisplayIsActive(restoredMainID) != 0,
-              noUnrelatedMirrorSets(
-                  in: currentDisplays,
-                  mirroredDisplayID: mirroredDisplayID,
-                  mainDisplayID: mirrorMasterID
-              ) else {
-            updateHandoffState(
-                .attentionRequired,
-                error: "The display arrangement changed before it could be restored."
-            )
-            return
-        }
-
-        let isExpectedMirror = CGDisplayIsInMirrorSet(mirroredDisplayID) != 0 &&
-            CGDisplayMirrorsDisplay(mirroredDisplayID) == mirrorMasterID
-        let isAlreadyExtended = CGDisplayIsInMirrorSet(mirroredDisplayID) == 0 &&
-            CGDisplayIsInMirrorSet(mirrorMasterID) == 0
-        guard isExpectedMirror || isAlreadyExtended else {
-            updateHandoffState(
-                .attentionRequired,
-                error: "The display arrangement could not be recognized."
-            )
-            return
-        }
-
-        var configuration: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&configuration) == .success,
-              let configuration else {
-            GetKbdLog.error("display.extend.failed", "Unable to begin display configuration")
-            updateHandoffState(
-                .attentionRequired,
-                error: "Unable to begin restoring the display layout."
-            )
-            return
-        }
-
-        if isExpectedMirror {
-            let unmirrorResult = CGConfigureDisplayMirrorOfDisplay(
-                configuration,
-                mirroredDisplayID,
-                kCGNullDirectDisplay
-            )
-            guard unmirrorResult == .success else {
-                _ = CGCancelDisplayConfiguration(configuration)
-                GetKbdLog.error(
-                    "display.extend.failed",
-                    "Unable to disable display mirroring (CGError \(unmirrorResult.rawValue))"
-                )
-                updateHandoffState(
-                    .attentionRequired,
-                    error: "Unable to stop temporary display mirroring."
-                )
-                return
-            }
-        }
-
-        for display in savedConfiguration.displays {
-            guard let displayID = currentDisplays[display.identifier] else { continue }
-            guard CGDisplayIsActive(displayID) != 0 else { continue }
-            if let mode = display.mode?.matchingMode(for: displayID) {
-                let modeResult = CGConfigureDisplayWithDisplayMode(
-                    configuration,
-                    displayID,
-                    mode,
-                    nil
-                )
-                guard modeResult == .success else {
-                    _ = CGCancelDisplayConfiguration(configuration)
-                    GetKbdLog.error(
-                        "display.extend.failed",
-                        "Unable to restore display mode (CGError \(modeResult.rawValue))"
-                    )
-                    updateHandoffState(
-                        .attentionRequired,
-                        error: "Unable to restore a display mode."
-                    )
-                    return
-                }
-            }
-        }
-
-        let originResult = configureOrigins(
-            savedConfiguration.displays,
-            mainDisplayIdentifier: savedConfiguration.restoredMainDisplayIdentifier,
-            currentDisplays: currentDisplays,
-            configuration: configuration
-        )
-        guard originResult == .success else {
-            _ = CGCancelDisplayConfiguration(configuration)
-            GetKbdLog.error(
-                "display.extend.failed",
-                "Unable to restore display layout (CGError \(originResult.rawValue))"
-            )
-            updateHandoffState(
-                .attentionRequired,
-                error: "Unable to restore the display layout."
-            )
-            return
-        }
-
-        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
-        guard completeResult == .success else {
-            GetKbdLog.error(
-                "display.extend.failed",
-                "Unable to apply extended configuration (CGError \(completeResult.rawValue))"
-            )
-            updateHandoffState(
-                .attentionRequired,
-                error: "Unable to apply the restored display layout."
-            )
-            return
-        }
-
-        let restoredDisplays = Self.currentDisplaysByIdentifier()
-        guard let restoredMirroredDisplayID = restoredDisplays[savedConfiguration.mirroredDisplayIdentifier],
-              let restoredMainDisplayID = restoredDisplays[savedConfiguration.restoredMainDisplayIdentifier],
-              CGDisplayIsInMirrorSet(restoredMirroredDisplayID) == 0,
-              CGDisplayIsInMirrorSet(restoredMainDisplayID) == 0 else {
-            GetKbdLog.error("display.extend.failed", "Display layout was not restored completely")
-            updateHandoffState(
-                .attentionRequired,
-                error: "The display layout was not restored completely."
-            )
-            return
-        }
-
-        if CGMainDisplayID() != restoredMainDisplayID {
-            GetKbdLog.error("display.extend.failed", "The selected monitor did not become primary")
-            guard makeDisplayPrimary(displayID: restoredMainDisplayID),
-                  CGMainDisplayID() == restoredMainDisplayID else {
-                updateHandoffState(
-                    .attentionRequired,
-                    error: "The selected monitor could not become primary."
-                )
-                return
-            }
-        }
-
-        savedExtendedConfiguration = nil
-        updateHandoffState(.restored)
-        GetKbdLog.event("display.mirror.ended", "display=\(mirroredDisplayID)")
-        makeConfiguredDisplayPrimary()
-    }
-
-    private func makeConfiguredDisplayPrimary() {
-        let onlineDisplayIDs = Self.currentDisplayIDs()
-        guard let displayID = configuredDisplayID(in: onlineDisplayIDs) else { return }
-        makeDisplayPrimary(displayID: displayID, onlineDisplayIDs: onlineDisplayIDs)
-    }
-
-    @discardableResult
-    private func makeDisplayPrimary(
-        displayID: CGDirectDisplayID,
-        onlineDisplayIDs: [CGDirectDisplayID]? = nil
-    ) -> Bool {
-        let onlineDisplayIDs = onlineDisplayIDs ?? Self.currentDisplayIDs()
-        guard onlineDisplayIDs.contains(displayID),
+        guard restored,
               CGDisplayIsActive(displayID) != 0,
-              onlineDisplayIDs.allSatisfy({ CGDisplayIsInMirrorSet($0) == 0 }) else {
-            return false
-        }
-        guard CGDisplayIsMain(displayID) == 0 else {
-            return true
-        }
-
-        let activeDisplayIDs = onlineDisplayIDs.filter { CGDisplayIsActive($0) != 0 }
-        let displayStates = activeDisplayIDs.map(DisplayState.init)
-        var configuration: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&configuration) == .success,
-              let configuration else {
-            GetKbdLog.error("display.primary.failed", "Unable to begin display configuration")
-            return false
-        }
-
-        let originResult = configureOrigins(
-            displayStates,
-            mainDisplayIdentifier: Self.identifier(for: displayID),
-            currentDisplays: Dictionary(
-                activeDisplayIDs.map { (Self.identifier(for: $0), $0) },
-                uniquingKeysWith: { first, _ in first }
-            ),
-            configuration: configuration
-        )
-        guard originResult == .success else {
-            _ = CGCancelDisplayConfiguration(configuration)
-            GetKbdLog.error(
-                "display.primary.failed",
-                "Unable to set primary display (CGError \(originResult.rawValue))"
+              CGMainDisplayID() == displayID else {
+            updateParkingState(
+                .attentionRequired,
+                error: "The external display could not be restored as the primary display."
             )
-            return false
+            return
         }
 
-        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
-        guard completeResult == .success else {
-            GetKbdLog.error(
-                "display.primary.failed",
-                "Unable to apply primary display (CGError \(completeResult.rawValue))"
-            )
-            return false
-        }
-
-        guard CGMainDisplayID() == displayID else {
-            GetKbdLog.error("display.primary.failed", "The selected monitor did not become primary")
-            return false
-        }
-
-        GetKbdLog.event("display.primary.set", "display=\(displayID)")
-        return true
-    }
-
-    private func configureOrigins(
-        _ displays: [DisplayState],
-        mainDisplayIdentifier: String,
-        currentDisplays: [String: CGDirectDisplayID],
-        configuration: CGDisplayConfigRef
-    ) -> CGError {
-        let mainDisplay = displays.first { $0.identifier == mainDisplayIdentifier }
-        // Display coordinates use the origin to identify the primary display. Translate the
-        // saved layout as a whole so relative positions stay unchanged.
-        let offsetX = mainDisplay.map { -Int64($0.originX) } ?? 0
-        let offsetY = mainDisplay.map { -Int64($0.originY) } ?? 0
-
-        for display in displays {
-            guard let displayID = currentDisplays[display.identifier] else { continue }
-            guard CGDisplayIsActive(displayID) != 0 else { continue }
-            let originResult = CGConfigureDisplayOrigin(
-                configuration,
-                displayID,
-                Int32(Int64(display.originX) + offsetX),
-                Int32(Int64(display.originY) + offsetY)
-            )
-            guard originResult == .success else { return originResult }
-        }
-
-        return .success
-    }
-
-    private func noUnrelatedMirrorSets(
-        in currentDisplays: [String: CGDirectDisplayID],
-        mirroredDisplayID: CGDirectDisplayID,
-        mainDisplayID: CGDirectDisplayID
-    ) -> Bool {
-        currentDisplays.values.allSatisfy { displayID in
-            displayID == mirroredDisplayID ||
-                displayID == mainDisplayID ||
-                CGDisplayIsInMirrorSet(displayID) == 0
-        }
-    }
-
-    private func updateHandoffState(_ state: DisplayHandoffState, error: String? = nil) {
-        guard handoffState != state || handoffError != error else { return }
-        handoffState = state
-        handoffError = error
-        onHandoffStateChange?()
+        savedConfiguration = nil
+        updateParkingState(.restored)
+        GetKbdLog.event("display.restored", "display=\(displayID)")
     }
 
     func scheduleEvaluation() {
@@ -691,28 +259,34 @@ final class DisplayMonitor: DisplayHandoffControlling {
     }
 
     static func currentDisplays() -> [DisplayDescriptor] {
-        NSScreen.screens.compactMap { (screen: NSScreen) -> DisplayDescriptor? in
-            guard let displayID = displayID(for: screen) else { return nil }
+        let names = Dictionary(
+            NSScreen.screens.compactMap { screen -> (CGDirectDisplayID, String)? in
+                guard let displayID = displayID(for: screen) else { return nil }
+                return (displayID, screen.localizedName)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
 
+        return currentOnlineDisplayIDs().compactMap { displayID in
+            guard CGDisplayIsBuiltin(displayID) == 0 else { return nil }
             return DisplayDescriptor(
                 identifier: identifier(for: displayID),
-                name: screen.localizedName,
-                isBuiltIn: CGDisplayIsBuiltin(displayID) != 0
+                name: names[displayID] ?? "External display",
+                isBuiltIn: false
             )
         }
     }
 
     private func evaluate(notify: Bool) {
-        let newValue = configuredDisplayIdentifier.map { identifier in
-            Self.currentDisplays().contains { $0.identifier == identifier }
-        } ?? false
+        let newValue = configuredDisplayID() != nil
 
         guard newValue != isPresent else {
             if notify {
-                onConfigurationChange?()
+                onStateChange?()
             }
             return
         }
+
         isPresent = newValue
 
         guard notify else { return }
@@ -722,7 +296,11 @@ final class DisplayMonitor: DisplayHandoffControlling {
             "configured=\(configured)"
         )
         onChange?(newValue)
-        onConfigurationChange?()
+        onStateChange?()
+    }
+
+    private func configuredDisplayID() -> CGDirectDisplayID? {
+        configuredDisplayID(in: Self.currentOnlineDisplayIDs())
     }
 
     private func configuredDisplayID(in displayIDs: [CGDirectDisplayID]) -> CGDirectDisplayID? {
@@ -732,7 +310,230 @@ final class DisplayMonitor: DisplayHandoffControlling {
         }
     }
 
-    private static func currentDisplayIDs() -> [CGDirectDisplayID] {
+    private func removeMirroringIfNeeded(for displayID: CGDirectDisplayID) -> Bool {
+        let onlineDisplayIDs = Self.currentOnlineDisplayIDs()
+        let mirrors: [CGDirectDisplayID]
+        if CGDisplayMirrorsDisplay(displayID) != kCGNullDirectDisplay {
+            mirrors = [displayID]
+        } else if CGDisplayIsInMirrorSet(displayID) != 0 {
+            mirrors = onlineDisplayIDs.filter {
+                $0 != displayID && CGDisplayMirrorsDisplay($0) == displayID
+            }
+        } else {
+            mirrors = []
+        }
+        guard !mirrors.isEmpty else { return true }
+
+        var configuration: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configuration) == .success,
+              let configuration else {
+            return false
+        }
+
+        for displayID in mirrors {
+            let result = CGConfigureDisplayMirrorOfDisplay(
+                configuration,
+                displayID,
+                kCGNullDirectDisplay
+            )
+            guard result == .success else {
+                _ = CGCancelDisplayConfiguration(configuration)
+                return false
+            }
+        }
+
+        let result = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
+        guard result == .success else {
+            GetKbdLog.error(
+                "display.unmirror.failed",
+                "Unable to remove display mirroring (CGError \(result.rawValue))"
+            )
+            return false
+        }
+
+        return true
+    }
+
+    private func setDisplayEnabled(_ displayID: CGDirectDisplayID, enabled: Bool) -> Bool {
+        guard let configureDisplayEnabled = Self.configureDisplayEnabledFunction() else {
+            GetKbdLog.error(
+                "display.enable.failed",
+                "CGSConfigureDisplayEnabled is not available"
+            )
+            return false
+        }
+
+        var configuration: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configuration) == .success,
+              let configuration else {
+            return false
+        }
+
+        let configureResult = configureDisplayEnabled(configuration, displayID, enabled)
+        guard configureResult == .success else {
+            _ = CGCancelDisplayConfiguration(configuration)
+            GetKbdLog.error(
+                "display.enable.failed",
+                "Unable to set display enabled=\(enabled) (CGError \(configureResult.rawValue))"
+            )
+            return false
+        }
+
+        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
+        guard completeResult == .success else {
+            GetKbdLog.error(
+                "display.enable.failed",
+                "Unable to apply display enabled=\(enabled) (CGError \(completeResult.rawValue))"
+            )
+            return false
+        }
+
+        return true
+    }
+
+    private func restoreConfiguration(_ savedConfiguration: SavedDisplayConfiguration) -> Bool {
+        guard let configuredDisplayIdentifier,
+              let configuredDisplayID = configuredDisplayID() else {
+            return false
+        }
+
+        let currentDisplays = Self.currentDisplaysByIdentifier()
+        var configuration: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configuration) == .success,
+              let configuration else {
+            return false
+        }
+
+        for display in savedConfiguration.displays {
+            guard let displayID = currentDisplays[display.identifier],
+                  CGDisplayIsActive(displayID) != 0 else {
+                continue
+            }
+            guard let mode = display.mode?.matchingMode(for: displayID) else { continue }
+
+            let result = CGConfigureDisplayWithDisplayMode(
+                configuration,
+                displayID,
+                mode,
+                nil
+            )
+            guard result == .success else {
+                _ = CGCancelDisplayConfiguration(configuration)
+                return false
+            }
+        }
+
+        let originResult = configureOrigins(
+            savedConfiguration.displays,
+            mainDisplayIdentifier: configuredDisplayIdentifier,
+            currentDisplays: currentDisplays,
+            configuration: configuration
+        )
+        guard originResult == .success else {
+            _ = CGCancelDisplayConfiguration(configuration)
+            return false
+        }
+
+        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
+        guard completeResult == .success else { return false }
+
+        let finalDisplays = Self.currentDisplaysByIdentifier()
+        guard let finalConfiguredID = finalDisplays[configuredDisplayIdentifier],
+              finalConfiguredID == configuredDisplayID,
+              CGDisplayIsActive(finalConfiguredID) != 0,
+              CGMainDisplayID() == finalConfiguredID else {
+            return false
+        }
+
+        return true
+    }
+
+    private func makeConfiguredDisplayPrimary() -> Bool {
+        guard let configuredDisplayID = configuredDisplayID(),
+              CGDisplayIsActive(configuredDisplayID) != 0 else {
+            return false
+        }
+
+        let activeDisplayIDs = Self.currentOnlineDisplayIDs()
+            .filter { CGDisplayIsActive($0) != 0 }
+        let displayStates = activeDisplayIDs.map(DisplayState.init)
+        let currentDisplays = Dictionary(
+            activeDisplayIDs.map { (Self.identifier(for: $0), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var configuration: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configuration) == .success,
+              let configuration else {
+            return false
+        }
+
+        let originResult = configureOrigins(
+            displayStates,
+            mainDisplayIdentifier: Self.identifier(for: configuredDisplayID),
+            currentDisplays: currentDisplays,
+            configuration: configuration
+        )
+        guard originResult == .success else {
+            _ = CGCancelDisplayConfiguration(configuration)
+            return false
+        }
+
+        let completeResult = CGCompleteDisplayConfiguration(configuration, .forAppOnly)
+        guard completeResult == .success else { return false }
+        return CGMainDisplayID() == configuredDisplayID
+    }
+
+    private func configureOrigins(
+        _ displays: [DisplayState],
+        mainDisplayIdentifier: String,
+        currentDisplays: [String: CGDirectDisplayID],
+        configuration: CGDisplayConfigRef
+    ) -> CGError {
+        let mainDisplay = displays.first { $0.identifier == mainDisplayIdentifier }
+        let offsetX = mainDisplay.map { -Int64($0.originX) } ?? 0
+        let offsetY = mainDisplay.map { -Int64($0.originY) } ?? 0
+
+        for display in displays {
+            guard let displayID = currentDisplays[display.identifier],
+                  CGDisplayIsActive(displayID) != 0 else {
+                continue
+            }
+
+            let originResult = CGConfigureDisplayOrigin(
+                configuration,
+                displayID,
+                Int32(Int64(display.originX) + offsetX),
+                Int32(Int64(display.originY) + offsetY)
+            )
+            guard originResult == .success else { return originResult }
+        }
+
+        if mainDisplay == nil,
+           let configuredDisplayIdentifier,
+           let displayID = currentDisplays[configuredDisplayIdentifier] {
+            return CGConfigureDisplayOrigin(configuration, displayID, 0, 0)
+        }
+
+        return .success
+    }
+
+    private func updateParkingState(_ state: DisplayParkingState, error: String? = nil) {
+        guard parkingState != state || parkingError != error else { return }
+        parkingState = state
+        parkingError = error
+        onStateChange?()
+    }
+
+
+    private static func configureDisplayEnabledFunction() -> ConfigureDisplayEnabledFunction? {
+        guard let handle = dlopen(nil, RTLD_LAZY) else { return nil }
+        defer { dlclose(handle) }
+        guard let symbol = dlsym(handle, "CGSConfigureDisplayEnabled") else { return nil }
+        return unsafeBitCast(symbol, to: ConfigureDisplayEnabledFunction.self)
+    }
+
+    private static func currentOnlineDisplayIDs() -> [CGDirectDisplayID] {
         var displayCount: UInt32 = 0
         guard CGGetOnlineDisplayList(0, nil, &displayCount) == .success,
               displayCount > 0 else {
@@ -749,7 +550,7 @@ final class DisplayMonitor: DisplayHandoffControlling {
 
     private static func currentDisplaysByIdentifier() -> [String: CGDirectDisplayID] {
         Dictionary(
-            currentDisplayIDs().map { (identifier(for: $0), $0) },
+            currentOnlineDisplayIDs().map { (identifier(for: $0), $0) },
             uniquingKeysWith: { first, _ in first }
         )
     }

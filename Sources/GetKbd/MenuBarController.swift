@@ -6,25 +6,19 @@ import Foundation
 final class MenuBarController: NSObject {
     private let statusItem: NSStatusItem
     private let ownership: OwnershipController
-    private let displayMonitor: DisplayMonitor
     private let settingsStore: SettingsStore
-    private let peer: PeerVerificationController
     private let showSettings: () -> Void
     private let quit: () -> Void
     private var shortcutAvailable = true
 
     init(
         ownership: OwnershipController,
-        displayMonitor: DisplayMonitor,
         settingsStore: SettingsStore,
-        peer: PeerVerificationController,
         showSettings: @escaping () -> Void,
         quit: @escaping () -> Void
     ) {
         self.ownership = ownership
-        self.displayMonitor = displayMonitor
         self.settingsStore = settingsStore
-        self.peer = peer
         self.showSettings = showSettings
         self.quit = quit
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -69,61 +63,42 @@ final class MenuBarController: NSObject {
             color: snapshot.keyboardState == .connectedLocal ? .systemGreen : .secondaryLabelColor
         )
 
-        let setupStatus = Self.setupStatus(for: settings, peer: peer)
-        let setupColor: NSColor = setupStatus == "Ready" ? .systemGreen : .systemOrange
+        let ready = !settings.needsOnboarding
         addLabel(
-            setupStatus == "Ready" ? "Ready to switch" : setupStatus,
+            ready ? "Ready to switch" : "Setup needs attention",
             to: menu,
             secondary: true,
-            color: setupColor
+            color: ready ? .systemGreen : .systemOrange
         )
+        addLabel(
+            snapshot.usbHubPresent ? "Input signal connected" : "Input signal disconnected",
+            to: menu,
+            secondary: true
+        )
+        let displayStatus = snapshot.monitorPresent ? "Display connected" : "Display disconnected"
+        addLabel(displayStatus, to: menu, secondary: true)
 
-        addLabel("Switching: \(settings.automaticSource.menuTitle)", to: menu, secondary: true)
-
-        let monitorStatus = displayMonitor.configuredDisplayIdentifier == nil
-            ? "Display not configured"
-            : (snapshot.monitorPresent ? "Display connected" : "Display disconnected")
-        let hubStatus = settings.selectedUSBHub == nil
-            ? "Input signal not configured"
-            : (snapshot.usbHubPresent ? "Input signal connected" : "Input signal disconnected")
-        switch settings.automaticSource {
-        case .monitor:
-            addLabel(monitorStatus, to: menu, secondary: true)
-        case .usbHub:
-            addLabel("\(monitorStatus) | \(hubStatus)", to: menu, secondary: true)
-        case .off:
-            break
-        }
-
-        if settings.automaticSource == .usbHub, peer.isPaired {
-            addLabel(
-                "Other Mac: \(peer.peerName ?? "Connected") | \(peer.verificationTitle)",
-                to: menu,
-                secondary: true
-            )
-        }
-
-        if snapshot.displayHandoffState != .idle,
-           snapshot.displayHandoffState != .restored {
-            addLabel(snapshot.displayHandoffState.menuTitle, to: menu, secondary: true)
+        if snapshot.displayParkingState != .idle,
+           snapshot.displayParkingState != .restored {
+            addLabel(snapshot.displayParkingState.menuTitle, to: menu, secondary: true)
         }
         if let errorMessage = snapshot.errorMessage {
             addLabel(errorMessage, to: menu, secondary: true, color: .systemRed)
         }
-        if let displayError = snapshot.displayHandoffError {
+        if let displayError = snapshot.displayParkingError {
             addLabel(displayError, to: menu, secondary: true, color: .systemRed)
         }
 
         menu.addItem(.separator())
 
-        if snapshot.displayHandoffState == .attentionRequired {
-            let restoreItem = NSMenuItem(
-                title: "Restore Display Layout",
-                action: #selector(retryDisplayLayout),
+        if snapshot.displayParkingState == .attentionRequired {
+            let retryItem = NSMenuItem(
+                title: "Retry Display Layout",
+                action: #selector(retryDisplayParking),
                 keyEquivalent: ""
             )
-            restoreItem.target = self
-            menu.addItem(restoreItem)
+            retryItem.target = self
+            menu.addItem(retryItem)
         }
 
         let shortcut = settings.shortcut
@@ -165,7 +140,7 @@ final class MenuBarController: NSObject {
 
         menu.addItem(.separator())
 
-        let settingsTitle = setupStatus == "Ready" ? "Settings..." : "Finish Setup..."
+        let settingsTitle = ready ? "Settings..." : "Finish Setup..."
         let settingsItem = NSMenuItem(title: settingsTitle, action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         settingsItem.keyEquivalentModifierMask = [.command]
@@ -227,26 +202,6 @@ final class MenuBarController: NSObject {
         return NSImage(systemSymbolName: symbolName, accessibilityDescription: state.menuTitle)
     }
 
-    private static func setupStatus(
-        for settings: AppSettings,
-        peer: PeerVerificationController
-    ) -> String {
-        guard settings.selectedKeyboard != nil else { return "Needs setup" }
-
-        switch settings.automaticSource {
-        case .monitor:
-            return settings.selectedDisplay == nil ? "Needs setup" : "Ready"
-        case .usbHub:
-            guard settings.selectedDisplay != nil,
-                  settings.selectedUSBHub != nil else { return "Needs setup" }
-            return peer.verificationStatus == .verified && peer.kvmTestStatus == .passed
-                ? "Ready"
-                : "KVM test not verified"
-        case .off:
-            return "Ready"
-        }
-    }
-
     private static func cocoaModifiers(for shortcut: ShortcutConfiguration) -> NSEvent.ModifierFlags {
         var flags: NSEvent.ModifierFlags = []
         if shortcut.modifiers & UInt32(controlKey) != 0 { flags.insert(.control) }
@@ -272,8 +227,8 @@ final class MenuBarController: NSObject {
         }
     }
 
-    @objc private func retryDisplayLayout() {
-        ownership.retryDisplayHandoff()
+    @objc private func retryDisplayParking() {
+        ownership.retryDisplayParking()
     }
 
     @objc private func openSettings() {

@@ -34,7 +34,6 @@ enum KeyboardConnectionState: String, Codable, Equatable, Sendable {
 }
 
 enum OwnershipReason: String, Codable, Equatable, Sendable {
-    case monitor
     case usbHub
     case manual
     case existing
@@ -42,7 +41,6 @@ enum OwnershipReason: String, Codable, Equatable, Sendable {
 
     var menuTitle: String {
         switch self {
-        case .monitor: return "Monitor"
         case .usbHub: return "KVM USB hub"
         case .manual: return "Manual"
         case .existing: return "Existing connection"
@@ -51,52 +49,10 @@ enum OwnershipReason: String, Codable, Equatable, Sendable {
     }
 }
 
-enum AutomaticSource: String, Codable, Equatable, Sendable {
-    case monitor
-    case usbHub
-    case off
-
-    init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer().decode(String.self)
-        switch value {
-        case "monitor":
-            self = .monitor
-        case "usbHub", "kvmInput":
-            self = .usbHub
-        case "off":
-            self = .off
-        default:
-            throw DecodingError.dataCorruptedError(
-                in: try decoder.singleValueContainer(),
-                debugDescription: "Unknown automatic source \(value)"
-            )
-        }
-    }
-
-    var menuTitle: String {
-        switch self {
-        case .monitor: return "Monitor connection"
-        case .usbHub: return "KVM USB hub connection"
-        case .off: return "Manual only"
-        }
-    }
-
-    var setupTitle: String {
-        switch self {
-        case .monitor:
-            return "Unplug and reconnect the display cable"
-        case .usbHub:
-            return "Both Macs stay connected; change the monitor input"
-        case .off:
-            return "Switch manually"
-        }
-    }
-}
-
-enum DisplayHandoffState: String, Codable, Equatable, Sendable {
+enum DisplayParkingState: String, Codable, Equatable, Sendable {
     case idle
-    case preparing
-    case protected
+    case parking
+    case parked
     case restoring
     case restored
     case attentionRequired
@@ -104,87 +60,18 @@ enum DisplayHandoffState: String, Codable, Equatable, Sendable {
     var menuTitle: String {
         switch self {
         case .idle:
-            return "No display handoff in progress"
-        case .preparing:
-            return "Preparing shared display..."
-        case .protected:
-            return "Shared display protected"
+            return "Display is not parked"
+        case .parking:
+            return "Parking external display..."
+        case .parked:
+            return "External display parked"
         case .restoring:
             return "Restoring display layout..."
         case .restored:
-            return "Display layout restored"
+            return "Extended display restored"
         case .attentionRequired:
             return "Display layout needs attention"
         }
-    }
-}
-
-enum PeerVerificationStatus: String, Codable, Equatable, Sendable {
-    case unverified
-    case listening
-    case verified
-    case unsafe
-    case ambiguous
-    case noSignal
-    case unavailable
-
-    var menuTitle: String {
-        switch self {
-        case .unverified: return "Not verified"
-        case .listening: return "Listening for input change..."
-        case .verified: return "Input switch verified"
-        case .unsafe: return "Unsafe: both Macs see the hub"
-        case .ambiguous: return "Ambiguous hub change"
-        case .noSignal: return "No USB signal detected"
-        case .unavailable: return "Peer unavailable"
-        }
-    }
-}
-
-enum PeerConnectionState: String, Equatable, Sendable {
-    case unavailable
-    case discovered
-    case connecting
-    case awaitingConfirmation
-    case paired
-    case stale
-}
-
-enum KVMTestStatus: String, Codable, Equatable, Sendable {
-    case notStarted
-    case waitingForFirstSwitch
-    case waitingForReturn
-    case passed
-    case skipped
-    case failed
-
-    var menuTitle: String {
-        switch self {
-        case .notStarted: return "Not tested"
-        case .waitingForFirstSwitch: return "Waiting for first switch..."
-        case .waitingForReturn: return "Switch back to finish the test"
-        case .passed: return "Handoff test passed"
-        case .skipped: return "Handoff test not verified"
-        case .failed: return "Handoff test failed"
-        }
-    }
-}
-
-struct PeerPreferences: Codable, Equatable, Sendable {
-    var instanceID: String
-    var pairedPeerID: String?
-    var pairedPeerName: String?
-    var verificationStatus: PeerVerificationStatus
-    var kvmTestStatus: KVMTestStatus
-
-    static func initial(instanceID: String = UUID().uuidString) -> PeerPreferences {
-        PeerPreferences(
-            instanceID: instanceID,
-            pairedPeerID: nil,
-            pairedPeerName: nil,
-            verificationStatus: .unverified,
-            kvmTestStatus: .notStarted
-        )
     }
 }
 
@@ -318,11 +205,6 @@ struct AppSettings: Codable, Equatable, Sendable {
     var selectedKeyboard: KeyboardDescriptor?
     var selectedDisplay: DisplayDescriptor?
     var selectedUSBHub: USBHubDescriptor?
-    var claimOnMonitorConnect: Bool
-    var monitorTakesOwnershipFromManual: Bool
-    var releaseOnMonitorDisconnect: Bool
-    var releaseBeforeSleep: Bool
-    var automaticSource: AutomaticSource
     var shortcut: ShortcutConfiguration
     var launchAtLogin: Bool
 
@@ -330,22 +212,12 @@ struct AppSettings: Codable, Equatable, Sendable {
         selectedKeyboard: KeyboardDescriptor?,
         selectedDisplay: DisplayDescriptor?,
         selectedUSBHub: USBHubDescriptor?,
-        claimOnMonitorConnect: Bool,
-        monitorTakesOwnershipFromManual: Bool,
-        releaseOnMonitorDisconnect: Bool,
-        releaseBeforeSleep: Bool,
-        automaticSource: AutomaticSource,
         shortcut: ShortcutConfiguration,
         launchAtLogin: Bool
     ) {
         self.selectedKeyboard = selectedKeyboard
         self.selectedDisplay = selectedDisplay
         self.selectedUSBHub = selectedUSBHub
-        self.claimOnMonitorConnect = claimOnMonitorConnect
-        self.monitorTakesOwnershipFromManual = monitorTakesOwnershipFromManual
-        self.releaseOnMonitorDisconnect = releaseOnMonitorDisconnect
-        self.releaseBeforeSleep = releaseBeforeSleep
-        self.automaticSource = automaticSource
         self.shortcut = shortcut
         self.launchAtLogin = launchAtLogin
     }
@@ -354,30 +226,20 @@ struct AppSettings: Codable, Equatable, Sendable {
         selectedKeyboard: nil,
         selectedDisplay: nil,
         selectedUSBHub: nil,
-        claimOnMonitorConnect: true,
-        monitorTakesOwnershipFromManual: false,
-        releaseOnMonitorDisconnect: true,
-        releaseBeforeSleep: true,
-        automaticSource: .monitor,
         shortcut: .default,
         launchAtLogin: true
     )
 
     var needsOnboarding: Bool {
         selectedKeyboard == nil ||
-            (automaticSource == .monitor && selectedDisplay == nil) ||
-            (automaticSource == .usbHub && (selectedDisplay == nil || selectedUSBHub == nil))
+            selectedDisplay == nil ||
+            selectedUSBHub == nil
     }
 
     private enum CodingKeys: String, CodingKey {
         case selectedKeyboard
         case selectedDisplay
         case selectedUSBHub
-        case claimOnMonitorConnect
-        case monitorTakesOwnershipFromManual
-        case releaseOnMonitorDisconnect
-        case releaseBeforeSleep
-        case automaticSource
         case shortcut
         case launchAtLogin
     }
@@ -388,26 +250,10 @@ struct AppSettings: Codable, Equatable, Sendable {
             selectedKeyboard: try container.decodeIfPresent(KeyboardDescriptor.self, forKey: .selectedKeyboard),
             selectedDisplay: try container.decodeIfPresent(DisplayDescriptor.self, forKey: .selectedDisplay),
             selectedUSBHub: try container.decodeIfPresent(USBHubDescriptor.self, forKey: .selectedUSBHub),
-            claimOnMonitorConnect: try container.decode(Bool.self, forKey: .claimOnMonitorConnect),
-            monitorTakesOwnershipFromManual: try container.decodeIfPresent(
-                Bool.self,
-                forKey: .monitorTakesOwnershipFromManual
-            ) ?? false,
-            releaseOnMonitorDisconnect: try container.decode(Bool.self, forKey: .releaseOnMonitorDisconnect),
-            releaseBeforeSleep: try container.decode(Bool.self, forKey: .releaseBeforeSleep),
-            automaticSource: try container.decodeIfPresent(AutomaticSource.self, forKey: .automaticSource) ?? .monitor,
-            shortcut: try container.decode(ShortcutConfiguration.self, forKey: .shortcut),
-            launchAtLogin: try container.decode(Bool.self, forKey: .launchAtLogin)
+            shortcut: try container.decodeIfPresent(ShortcutConfiguration.self, forKey: .shortcut) ?? .default,
+            launchAtLogin: try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? true
         )
     }
-}
-
-struct AutomaticBehavior: Equatable, Sendable {
-    var claimOnMonitorConnect: Bool
-    var monitorTakesOwnershipFromManual: Bool
-    var releaseOnMonitorDisconnect: Bool
-    var releaseBeforeSleep: Bool
-    var automaticSource: AutomaticSource = .monitor
 }
 
 struct OwnershipSnapshot: Equatable, Sendable {
@@ -417,8 +263,8 @@ struct OwnershipSnapshot: Equatable, Sendable {
     let usbHubPresent: Bool
     let isBusy: Bool
     let errorMessage: String?
-    let displayHandoffState: DisplayHandoffState
-    let displayHandoffError: String?
+    let displayParkingState: DisplayParkingState
+    let displayParkingError: String?
 
     init(
         keyboardState: KeyboardConnectionState,
@@ -427,8 +273,8 @@ struct OwnershipSnapshot: Equatable, Sendable {
         usbHubPresent: Bool,
         isBusy: Bool,
         errorMessage: String?,
-        displayHandoffState: DisplayHandoffState = .idle,
-        displayHandoffError: String? = nil
+        displayParkingState: DisplayParkingState = .idle,
+        displayParkingError: String? = nil
     ) {
         self.keyboardState = keyboardState
         self.ownershipReason = ownershipReason
@@ -436,7 +282,7 @@ struct OwnershipSnapshot: Equatable, Sendable {
         self.usbHubPresent = usbHubPresent
         self.isBusy = isBusy
         self.errorMessage = errorMessage
-        self.displayHandoffState = displayHandoffState
-        self.displayHandoffError = displayHandoffError
+        self.displayParkingState = displayParkingState
+        self.displayParkingError = displayParkingError
     }
 }
