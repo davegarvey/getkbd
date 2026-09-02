@@ -55,18 +55,16 @@ does not expose a unique active-host signal and automatic switching is not safe.
 
 ## Display behavior
 
-The inactive Mac does not mirror its laptop display onto the shared monitor. Instead, getkbd
-temporarily disables the external display in macOS so the inactive Mac has a laptop-only desktop.
-This lets macOS move windows off the unavailable monitor without forcing either display to use the
-other display's scaling or resolution.
+The inactive Mac does not mirror its laptop display onto the shared monitor. Instead, getkbd keeps
+the external display signal online and covers that display with a temporary black window. This
+keeps the KVM input switchable and avoids forcing either display to use the other display's scaling
+or resolution.
 
-When the hub appears again, getkbd re-enables the external display, restores the saved extended
-layout and display mode, and makes the external display primary. The display remains physically
-connected while parked, so the KVM USB hub and monitor input controls remain available.
+When the hub appears again, getkbd removes the cover, restores the saved extended layout and
+display mode, and makes the external display primary. The display remains physically connected
+and actively signaled while parked, so the KVM USB hub and monitor input controls remain available.
 
-Display parking uses the private `CGSConfigureDisplayEnabled` CoreGraphics entry point because
-macOS does not provide a public display-disable API. If macOS cannot park or restore the display,
-the keyboard operation still completes and the menu bar offers a Display Settings recovery path.
+Normal display parking does not use private display-disable APIs.
 
 Closed-lid use is supported when the external display is active. If the display cable is removed,
 or the Mac sleeps, getkbd releases the keyboard and reevaluates all local signals after wake.
@@ -96,6 +94,8 @@ press Return.
   remains connected on both Macs.
 - If the display is parked but cannot be restored, open **Display Settings** and re-enable it;
   then use **Retry Display Layout** from the getkbd menu.
+- If an older build left the display disabled and the monitor input cannot be switched back,
+  restart that Mac before launching this build.
 - Wake or power-cycle the keyboard if pairing fails.
 - Both Macs must be running getkbd for automatic local handoff.
 - The built-in **Launch getkbd at login** option requires a signed build and will not work with
