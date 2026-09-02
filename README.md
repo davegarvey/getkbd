@@ -47,7 +47,7 @@ network connection, or coordination between the two getkbd instances is required
 1. Leave getkbd running on both Macs.
 2. Change the BenQ input with Display Pilot 2 or the monitor controls.
 3. The Mac where the selected USB hub appears claims the keyboard.
-4. The Mac where the hub disappears releases the keyboard and parks its external display.
+4. The Mac where the hub disappears releases the keyboard; its display configuration is unchanged.
 
 The selected display is a safety condition. If it is physically absent, getkbd releases the
 keyboard and will not automatically claim it. If both Macs see the selected hub, the hardware
@@ -55,16 +55,13 @@ does not expose a unique active-host signal and automatic switching is not safe.
 
 ## Display behavior
 
-The inactive Mac does not mirror its laptop display onto the shared monitor. Instead, getkbd keeps
-the external display signal online and covers that display with a temporary black window. This
-keeps the KVM input switchable and avoids forcing either display to use the other display's scaling
-or resolution.
+getkbd does not change display enablement, mirroring, mode, position, or primary-display selection
+during keyboard handoff. The selected external display is only a safety condition for automatic
+keyboard claims, so losing the USB hub or manually releasing the keyboard leaves the display alone.
 
-When the hub appears again, getkbd removes the cover, restores the saved extended layout and
-display mode, and makes the external display primary. The display remains physically connected
-and actively signaled while parked, so the KVM USB hub and monitor input controls remain available.
-
-Normal display parking does not use private display-disable APIs.
+If a laptop should use a single built-in display, unplug its display cable. After reconnecting it,
+wait for macOS to detect the display, then select that Mac's BenQ input. getkbd will use the USB hub
+signal to claim the keyboard without changing the display's native scaling.
 
 Closed-lid use is supported when the external display is active. If the display cable is removed,
 or the Mac sleeps, getkbd releases the keyboard and reevaluates all local signals after wake.
@@ -92,10 +89,8 @@ press Return.
 - Pair the keyboard with both Macs before using getkbd.
 - Select the physical USB hub that appears only when that Mac is active, not a HID device that
   remains connected on both Macs.
-- If the display is parked but cannot be restored, open **Display Settings** and re-enable it;
-  then use **Retry Display Layout** from the getkbd menu.
-- If an older build left the display disabled and the monitor input cannot be switched back,
-  restart that Mac before launching this build.
+- If the display is missing after reconnecting, open **Display Settings** and verify the cable and
+  selected BenQ input before retrying the switch.
 - Wake or power-cycle the keyboard if pairing fails.
 - Both Macs must be running getkbd for automatic local handoff.
 - The built-in **Launch getkbd at login** option requires a signed build and will not work with

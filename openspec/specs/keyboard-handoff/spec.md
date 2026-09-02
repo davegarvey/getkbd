@@ -50,14 +50,13 @@ the selected display to be online, and the selected USB hub to be present locall
 
 - **WHEN** the selected display is online and the selected USB hub becomes stably
   present locally while the Mac is awake
-- **THEN** getkbd SHALL restore the external display layout and SHALL schedule a
-  delayed keyboard claim attributed to the USB hub
+- **THEN** getkbd SHALL schedule a delayed keyboard claim attributed to the USB hub
 
 #### Scenario: KVM safety signal disappears
 
 - **WHEN** the selected display is offline or the selected USB hub is absent
-- **THEN** getkbd SHALL park the external display when possible and SHALL request
-  release of the selected keyboard regardless of any manual preference
+- **THEN** getkbd SHALL request release of the selected keyboard regardless of any
+  manual preference and SHALL leave display configuration unchanged
 
 #### Scenario: Both Macs see the selected hub
 
@@ -71,33 +70,24 @@ the selected display to be online, and the selected USB hub to be present locall
 - **THEN** getkbd SHALL debounce the selected-hub condition before changing the
   automatic ownership target
 
-### Requirement: Park the external display without mirroring
+### Requirement: Preserve display configuration during handoff
 
-When the automatic target is inactive and the selected external display remains
-online, getkbd SHALL keep the display signal online and cover its local desktop
-with a temporary opaque window rather than mirror it with another display. getkbd
-SHALL retain the active extended layout and display modes for restoration. Parking
-SHALL not select a new display mode or inherit scaling from another display.
+During keyboard handoff, getkbd SHALL not change display enablement, mirroring,
+mode, position, or primary-display selection. The selected external display SHALL
+remain a safety condition for automatic keyboard claims only.
 
-#### Scenario: Inactive Mac still sees the external display
+#### Scenario: USB hub changes while the display remains online
 
-- **WHEN** the selected USB hub disappears while the external display remains
-  physically online
-- **THEN** getkbd SHALL park the external display even if the keyboard is already
-  disconnected, without disabling its video signal
+- **WHEN** the selected USB hub appears or disappears while the selected display
+  remains online
+- **THEN** getkbd SHALL change keyboard ownership only and SHALL leave the display
+  configuration and visible desktop unchanged
 
-#### Scenario: Display is parked
+#### Scenario: User manually releases the keyboard
 
-- **WHEN** the external display is parked
-- **THEN** the display SHALL remain physically online and actively signaled for
-  the monitor KVM and USB hub, while its local desktop is covered
-
-#### Scenario: Mac becomes active again
-
-- **WHEN** the selected display and USB hub are online and present locally
-- **THEN** getkbd SHALL remove the desktop cover, restore the saved extended layout
-  and display modes, make the external display primary, and then allow the keyboard
-  claim to proceed
+- **WHEN** the user chooses Release Keyboard
+- **THEN** getkbd SHALL release the keyboard without changing the display
+  configuration or visible desktop
 
 #### Scenario: Closed-lid active use
 
@@ -106,33 +96,11 @@ SHALL not select a new display mode or inherit scaling from another display.
 - **THEN** getkbd SHALL allow the external display to remain enabled and SHALL
   not require mirroring
 
-#### Scenario: Display parking is unavailable
-
-- **WHEN** the display cannot be covered or restored
-- **THEN** getkbd SHALL still complete the keyboard ownership operation when
-  possible and SHALL expose an attention state with a Display Settings recovery
-  path
-
 #### Scenario: Selected display is offline
 
 - **WHEN** the selected display is not online
 - **THEN** getkbd SHALL not attempt display configuration and SHALL not
   automatically claim the keyboard
-
-### Requirement: Report display parking progress
-
-The system SHALL expose user-readable display states for parking, parked,
-restoring, restored, and attention-required outcomes.
-
-#### Scenario: Display parking is in progress
-
-- **WHEN** getkbd is enabling or disabling the selected external display
-- **THEN** the menu-bar and settings surfaces SHALL identify the current phase
-
-#### Scenario: Display parking completes
-
-- **WHEN** the expected enabled or parked state is verified
-- **THEN** getkbd SHALL expose the corresponding successful state
 
 ### Requirement: Reconcile ownership changes and retry automatic operations
 
@@ -161,8 +129,8 @@ of times.
 
 ### Requirement: Preserve safe behavior across sleep and restart
 
-The system SHALL release the keyboard before sleep, park the external display when
-possible, and re-evaluate local conditions after wake or application restart.
+The system SHALL release the keyboard before sleep and re-evaluate local conditions
+after wake or application restart without changing display configuration.
 
 #### Scenario: Mac prepares to sleep
 
@@ -178,9 +146,9 @@ possible, and re-evaluate local conditions after wake or application restart.
 
 #### Scenario: Application quits
 
-- **WHEN** getkbd quits while the external display is parked
-- **THEN** getkbd SHALL restore the external display configuration without
-  releasing the keyboard as a quit side effect
+- **WHEN** getkbd quits
+- **THEN** getkbd SHALL leave the display configuration unchanged and SHALL not
+  release the keyboard as a quit side effect
 
 ### Requirement: Change keyboard selection without orphaning the old device
 

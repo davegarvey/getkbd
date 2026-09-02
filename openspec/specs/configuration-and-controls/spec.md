@@ -80,8 +80,7 @@ display, USB hub, shortcut, and launch-at-login preference.
 ### Requirement: Provide live menu-bar status and manual actions
 
 The system SHALL provide a menu-bar interface showing keyboard state, local USB
-hub state, physical display state, display parking state, errors, and explicit
-keyboard actions.
+hub state, physical display state, errors, and explicit keyboard actions.
 
 #### Scenario: Keyboard is configured
 
@@ -101,11 +100,6 @@ keyboard actions.
   global shortcut
 - **THEN** getkbd SHALL request the corresponding manual ownership action
 
-#### Scenario: Display parking needs attention
-
-- **WHEN** display parking or restoration fails
-- **THEN** the menu SHALL show the failure and offer a retry action
-
 #### Scenario: Bluetooth operation is busy
 
 - **WHEN** a claim or release is in progress
@@ -114,8 +108,8 @@ keyboard actions.
 
 ### Requirement: Show actionable setup readiness
 
-The guided setup SHALL present a single readiness state, the next unmet local
-requirement, and a recovery action for device or display-parking problems.
+The guided setup SHALL present a single readiness state and the next unmet local
+requirement.
 
 #### Scenario: All selected requirements pass
 
@@ -178,5 +172,5 @@ and stop observers and the global shortcut on termination.
 #### Scenario: Application quits
 
 - **WHEN** the user quits getkbd
-- **THEN** getkbd SHALL restore any parked display and SHALL not automatically
-  release the keyboard as a quit side effect
+- **THEN** getkbd SHALL leave the display configuration unchanged and SHALL not
+  automatically release the keyboard as a quit side effect

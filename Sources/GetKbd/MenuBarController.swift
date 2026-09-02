@@ -78,28 +78,11 @@ final class MenuBarController: NSObject {
         let displayStatus = snapshot.monitorPresent ? "Display connected" : "Display disconnected"
         addLabel(displayStatus, to: menu, secondary: true)
 
-        if snapshot.displayParkingState != .idle,
-           snapshot.displayParkingState != .restored {
-            addLabel(snapshot.displayParkingState.menuTitle, to: menu, secondary: true)
-        }
         if let errorMessage = snapshot.errorMessage {
             addLabel(errorMessage, to: menu, secondary: true, color: .systemRed)
         }
-        if let displayError = snapshot.displayParkingError {
-            addLabel(displayError, to: menu, secondary: true, color: .systemRed)
-        }
 
         menu.addItem(.separator())
-
-        if snapshot.displayParkingState == .attentionRequired {
-            let retryItem = NSMenuItem(
-                title: "Retry Display Layout",
-                action: #selector(retryDisplayParking),
-                keyEquivalent: ""
-            )
-            retryItem.target = self
-            menu.addItem(retryItem)
-        }
 
         let shortcut = settings.shortcut
         let getItem = NSMenuItem(
@@ -225,10 +208,6 @@ final class MenuBarController: NSObject {
         } else {
             ownership.manualClaim()
         }
-    }
-
-    @objc private func retryDisplayParking() {
-        ownership.retryDisplayParking()
     }
 
     @objc private func openSettings() {
