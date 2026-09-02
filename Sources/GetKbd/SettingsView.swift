@@ -91,8 +91,8 @@ final class SettingsViewModel: ObservableObject {
         }
         guard settings.selectedDisplay != nil else {
             return SettingsReadiness(
-                title: "Choose the shared display",
-                detail: "Select the BenQ display connected to this Mac.",
+                title: "Choose the shared monitor",
+                detail: "Select the monitor connected to this Mac.",
                 systemImage: "rectangle.on.rectangle",
                 tone: .warning,
                 isReady: false
@@ -101,7 +101,7 @@ final class SettingsViewModel: ObservableObject {
         guard settings.selectedUSBHub != nil else {
             return SettingsReadiness(
                 title: "Identify the KVM input signal",
-                detail: "Choose the USB hub that appears only when this Mac is selected by the BenQ input.",
+                detail: "Choose the USB hub that appears only when this Mac is selected by the monitor input.",
                 systemImage: "cable.connector",
                 tone: .warning,
                 isReady: false
@@ -109,7 +109,7 @@ final class SettingsViewModel: ObservableObject {
         }
         return SettingsReadiness(
             title: "Ready to switch",
-            detail: "Changing the BenQ input moves the keyboard locally. No network connection is required.",
+            detail: "Changing the monitor input moves the keyboard locally. No network connection is required.",
             systemImage: "checkmark.circle.fill",
             tone: .positive,
             isReady: true
@@ -166,7 +166,7 @@ final class SettingsViewModel: ObservableObject {
 
     var hubDetectionDetail: String {
         if isLocallyIdentifyingHub {
-            return "Listening. Change the BenQ input, then wait for the hub list to change."
+            return "Listening. Change the monitor input, then wait for the hub list to change."
         }
         if let selectedHub = settings.selectedUSBHub {
             return "Selected signal: \(selectedHub.menuTitle)"
@@ -293,7 +293,7 @@ final class SettingsViewModel: ObservableObject {
             uniquingKeysWith: { first, _ in first }
         )
         isLocallyIdentifyingHub = true
-        hubIdentificationMessage = "Listening. Change the BenQ input now."
+        hubIdentificationMessage = "Listening. Change the monitor input now."
     }
 
     func getKeyboard() {
@@ -460,18 +460,18 @@ struct SettingsView: View {
                         Divider()
 
                         DevicePickerRow(
-                            title: "Display",
-                            detail: viewModel.settings.selectedDisplay?.name ?? "Select the BenQ display connected to this Mac.",
+                            title: "Monitor",
+                            detail: viewModel.settings.selectedDisplay?.name ?? "Select the monitor connected to this Mac.",
                             systemImage: "rectangle.on.rectangle"
                         ) {
-                            Picker("Display", selection: Binding(
+                            Picker("Monitor", selection: Binding(
                                 get: { viewModel.settings.selectedDisplay?.identifier ?? "" },
                                 set: { viewModel.selectDisplay(identifier: $0) }
                             )) {
                                 if viewModel.displayOptions.isEmpty {
-                                    Text("No external displays found").tag("")
+                                    Text("No external monitors found").tag("")
                                 } else {
-                                    Text("Select a display").tag("")
+                                    Text("Select a monitor").tag("")
                                     ForEach(viewModel.displayOptions) { display in
                                         Text(display.name).tag(display.identifier)
                                     }
@@ -481,7 +481,7 @@ struct SettingsView: View {
                             .pickerStyle(.menu)
                         }
                         StatusRow(
-                            title: "Display status",
+                            title: "Monitor status",
                             value: viewModel.displayStatusText,
                             tone: viewModel.displayTone
                         )
@@ -489,13 +489,17 @@ struct SettingsView: View {
                             viewModel.openDisplaySettings()
                         }
                         .buttonStyle(.link)
+                        Text("The extended desktop layout stays unchanged during handoff. If windows appear hidden on a laptop that is no longer using the monitor, unplug the monitor cable from that laptop to restore its built-in display as primary.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.top, 4)
                 }
 
-                GroupBox("BenQ input signal") {
+                GroupBox("Monitor input signal") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("The selected USB hub is the local active-input signal. It should appear only on the Mac selected by the BenQ input.")
+                        Text("The selected USB hub is the local active-input signal. It should appear only on the Mac selected by the monitor input.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
 

@@ -32,7 +32,7 @@ shortcut, and launch-at-login preference between runs.
 ### Requirement: Guide local KVM setup
 
 The settings window SHALL guide the user to select the same paired keyboard and
-external display on both Macs and to identify the USB hub that follows the BenQ
+external monitor on both Macs and to identify the USB hub that follows the monitor
 input. Setup SHALL not require the other Mac to be discoverable or connected to a
 network.
 
@@ -51,7 +51,7 @@ network.
 #### Scenario: User identifies the KVM hub
 
 - **WHEN** the user starts local hub identification and exactly one hub identifier
-  changes after the BenQ input changes
+  changes after the monitor input changes
 - **THEN** getkbd SHALL select that hub locally
 
 #### Scenario: Several hubs change during identification
@@ -114,7 +114,7 @@ requirement.
 #### Scenario: All selected requirements pass
 
 - **WHEN** the selected keyboard, external display, and USB hub are configured
-- **THEN** setup SHALL show Ready to switch and explain that changing the BenQ
+- **THEN** setup SHALL show Ready to switch and explain that changing the monitor
   input moves the keyboard locally without a network connection
 
 #### Scenario: A requirement is missing

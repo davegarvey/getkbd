@@ -1,6 +1,6 @@
 # getkbd
 
-Move one Apple Magic Keyboard between two Macs using the USB signal from a BenQ monitor KVM.
+Move one Apple Magic Keyboard between two Macs using the USB signal from a monitor KVM.
 getkbd watches local display, USB, Bluetooth, and system state. It does not read keyboard or
 mouse input and does not use the network.
 
@@ -8,8 +8,8 @@ mouse input and does not use the network.
 
 - Two Macs running macOS 26 or later
 - Apple Magic Keyboard paired with both Macs
-- BenQ MA270S, or a monitor KVM with a USB hub that appears only on the selected Mac
-- BenQ Display Pilot 2 installed on both Macs for software input switching
+- A monitor with a KVM and a USB hub that appears only on the selected Mac
+- Monitor controls or compatible input-switching software for changing the active monitor input
 - Xcode Command Line Tools on each Mac
 
 The default build is ad-hoc signed and does not require an Apple Developer account.
@@ -33,19 +33,19 @@ If macOS blocks the app, Control-click it, choose **Open**, and confirm.
 
 1. Pair the Apple Magic Keyboard with both Macs in **System Settings > Bluetooth**.
 2. Launch getkbd on both Macs.
-3. Open **Settings** and select the same keyboard and external BenQ display on both Macs.
+3. Open **Settings** and select the same keyboard and external monitor on both Macs.
 4. Select the USB hub connected through the monitor KVM on each Mac.
-5. If the hub is difficult to identify, click **Identify input signal**, change the BenQ input,
+5. If the hub is difficult to identify, click **Identify input signal**, change the monitor input,
    and let getkbd select the hub whose connection changes.
 6. Repeat the setup on the other Mac.
 
-The selected hub must appear on only the Mac currently selected by the BenQ input. No pairing,
+The selected hub must appear on only the Mac currently selected by the monitor input. No pairing,
 network connection, or coordination between the two getkbd instances is required.
 
 ## Use
 
 1. Leave getkbd running on both Macs.
-2. Change the BenQ input with Display Pilot 2 or the monitor controls.
+2. Change the monitor input with the monitor controls or compatible input-switching software.
 3. The Mac where the selected USB hub appears claims the keyboard.
 4. The Mac where the hub disappears releases the keyboard; its display configuration is unchanged.
 
@@ -59,9 +59,12 @@ getkbd does not change display enablement, mirroring, mode, position, or primary
 during keyboard handoff. The selected external display is only a safety condition for automatic
 keyboard claims, so losing the USB hub or manually releasing the keyboard leaves the display alone.
 
-If a laptop should use a single built-in display, unplug its display cable. After reconnecting it,
-wait for macOS to detect the display, then select that Mac's BenQ input. getkbd will use the USB hub
-signal to claim the keyboard without changing the display's native scaling.
+Because the extended desktop layout remains unchanged, a laptop that is no longer using the monitor
+may keep windows on the external display and make them appear hidden. To restore that laptop to its
+built-in display, unplug the monitor cable from that laptop; macOS will make its built-in display
+primary. After reconnecting the cable, wait for macOS to detect the display, then switch the monitor
+to that Mac's input. getkbd will use the USB hub signal to claim the keyboard without changing the
+display's native scaling.
 
 Closed-lid use is supported when the external display is active. If the display cable is removed,
 or the Mac sleeps, getkbd releases the keyboard and reevaluates all local signals after wake.
@@ -81,7 +84,7 @@ press Return.
 - **Release Keyboard**: release the selected keyboard.
 - **Settings**: change the selected keyboard, display, USB hub, shortcut, and launch-at-login
   preference.
-- **Identify input signal**: locally detect the USB connection that follows the BenQ input.
+- **Identify input signal**: locally detect the USB connection that follows the monitor input.
 - **Refresh device lists**: reload available keyboards, displays, and USB hubs.
 
 ## Troubleshooting
@@ -90,7 +93,7 @@ press Return.
 - Select the physical USB hub that appears only when that Mac is active, not a HID device that
   remains connected on both Macs.
 - If the display is missing after reconnecting, open **Display Settings** and verify the cable and
-  selected BenQ input before retrying the switch.
+  selected monitor input before retrying the switch.
 - Wake or power-cycle the keyboard if pairing fails.
 - Both Macs must be running getkbd for automatic local handoff.
 - The built-in **Launch getkbd at login** option requires a signed build and will not work with
