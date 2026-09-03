@@ -47,7 +47,8 @@ network connection, or coordination between the two getkbd instances is required
 1. Leave getkbd running on both Macs.
 2. Change the monitor input with the monitor controls or compatible input-switching software.
 3. The Mac where the selected USB hub appears claims the keyboard.
-4. The Mac where the hub disappears releases the keyboard; its display configuration is unchanged.
+4. The Mac where the hub disappears releases the keyboard and, when its built-in display is
+   active, makes that display primary.
 
 The selected display is a safety condition. If it is physically absent, getkbd releases the
 keyboard and will not automatically claim it. If both Macs see the selected hub, the hardware
@@ -55,16 +56,26 @@ does not expose a unique active-host signal and automatic switching is not safe.
 
 ## Display behavior
 
-getkbd does not change display enablement, mirroring, mode, position, or primary-display selection
-during keyboard handoff. The selected external display is only a safety condition for automatic
-keyboard claims, so losing the USB hub or manually releasing the keyboard leaves the display alone.
+When the selected monitor and USB hub are configured, getkbd follows the local hub signal while
+keeping both displays extended:
 
-Because the extended desktop layout remains unchanged, a laptop that is no longer using the monitor
-may keep windows on the external display and make them appear hidden. To restore that laptop to its
-built-in display, unplug the monitor cable from that laptop; macOS will make its built-in display
-primary. After reconnecting the cable, wait for macOS to detect the display, then switch the monitor
-to that Mac's input. getkbd will use the USB hub signal to claim the keyboard without changing the
-display's native scaling.
+- When the selected USB hub is present, the selected external monitor is primary.
+- When the selected USB hub is absent and the laptop display is active, the built-in display is
+  primary.
+- When the selected USB hub is absent while the laptop is in clamshell mode, getkbd leaves the
+  active external display as macOS has configured it.
+
+getkbd changes only the primary-display role. It does not change display enablement, mirroring,
+mode, or relative arrangement, and it does not move application windows directly. macOS remains
+responsible for normal window relocation when the primary display changes.
+
+Primary-display changes are application-scoped rather than permanent display preferences. When
+getkbd quits, macOS restores the prior session configuration; launching getkbd evaluates the
+current hub signal again.
+
+The selected external display remains a safety condition for automatic keyboard claims. If it is
+physically absent, getkbd releases the keyboard and will not automatically claim it. If a display
+role change fails, keyboard handoff continues independently.
 
 Closed-lid use is supported when the external display is active. If the display cable is removed,
 or the Mac sleeps, getkbd releases the keyboard and reevaluates all local signals after wake.

@@ -489,7 +489,7 @@ struct SettingsView: View {
                             viewModel.openDisplaySettings()
                         }
                         .buttonStyle(.link)
-                        Text("The extended desktop layout stays unchanged during handoff. If windows appear hidden on a laptop that is no longer using the monitor, unplug the monitor cable from that laptop to restore its built-in display as primary.")
+                        Text("getkbd follows the USB hub signal: the monitor is primary when this Mac is active, and the built-in display becomes primary when it is active and the hub is absent. In clamshell mode, the monitor remains primary.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
