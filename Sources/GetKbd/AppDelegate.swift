@@ -53,10 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         usbHubMonitor.onChange = { [weak self] isPresent in
+            guard let self else { return }
+            self.displayMonitor.updatePrimaryHubSignal(
+                configured: self.settingsStore.value.selectedUSBHub != nil,
+                present: isPresent
+            )
             if isPresent {
-                self?.ownershipController.usbHubConnected()
+                self.ownershipController.usbHubConnected()
             } else {
-                self?.ownershipController.usbHubDisconnected()
+                self.ownershipController.usbHubDisconnected()
             }
         }
         usbHubMonitor.onDevicesChanged = { [weak self] in
@@ -64,10 +69,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         sleepMonitor.onWillSleep = { [weak self] in
+            self?.displayMonitor.setPrimaryDisplaySleeping(true)
             self?.ownershipController.willSleep()
         }
         sleepMonitor.onDidWake = { [weak self] in
             guard let self else { return }
+            self.displayMonitor.setPrimaryDisplaySleeping(false)
+            self.displayMonitor.updatePrimaryHubSignal(
+                configured: self.settingsStore.value.selectedUSBHub != nil,
+                present: self.usbHubMonitor.isPresent
+            )
             self.ownershipController.didWake(
                 monitorPresent: self.displayMonitor.isPresent,
                 usbHubPresent: self.usbHubMonitor.isPresent
@@ -85,6 +96,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ownershipController.start(
             monitorPresent: monitorPresent,
             usbHubPresent: usbHubMonitor.isPresent
+        )
+        displayMonitor.updatePrimaryHubSignal(
+            configured: settings.selectedUSBHub != nil,
+            present: usbHubMonitor.isPresent
         )
         menuBarController.setShortcutAvailable(shortcutController.isRegistered)
 
@@ -147,6 +162,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if previous.selectedUSBHub?.identifier != effectiveSettings.selectedUSBHub?.identifier {
             usbHubMonitor.configuredHubIdentifier = effectiveSettings.selectedUSBHub?.identifier
         }
+
+        displayMonitor.updatePrimaryHubSignal(
+            configured: effectiveSettings.selectedUSBHub != nil,
+            present: usbHubMonitor.isPresent
+        )
 
         ownershipController.updateSignals(
             monitorPresent: displayMonitor.isPresent,
