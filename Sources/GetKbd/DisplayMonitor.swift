@@ -119,8 +119,10 @@ final class DisplayMonitor: DisplayMonitoring {
     private var primaryHubPresent = false
     private var primaryIsSleeping = false
     private var lastActiveDisplayIdentifiers = Set<String>()
+    private var lastMainDisplayIdentifier: String?
     private var primaryConfigurationInProgress = false
     private var primarySyncPending = false
+    private var primarySyncRequested = false
 
     init(
         configuredDisplayIdentifier: String?,
@@ -141,7 +143,7 @@ final class DisplayMonitor: DisplayMonitoring {
     func setPrimaryDisplaySleeping(_ sleeping: Bool) {
         primaryIsSleeping = sleeping
         guard !sleeping else { return }
-        synchronizePrimaryDisplay()
+        scheduleEvaluation(forcePrimarySync: true)
     }
 
     @discardableResult
@@ -179,9 +181,11 @@ final class DisplayMonitor: DisplayMonitoring {
         }
         debounceTask?.cancel()
         debounceTask = nil
+        primarySyncRequested = false
     }
 
-    func scheduleEvaluation() {
+    func scheduleEvaluation(forcePrimarySync: Bool = false) {
+        primarySyncRequested = primarySyncRequested || forcePrimarySync
         debounceTask?.cancel()
         let delay = UInt64(max(0, debounceInterval) * 1_000_000_000)
 
@@ -191,7 +195,10 @@ final class DisplayMonitor: DisplayMonitoring {
             }
 
             guard !Task.isCancelled else { return }
-            self?.evaluate(notify: true)
+            guard let self else { return }
+            let forcePrimarySync = self.primarySyncRequested
+            self.primarySyncRequested = false
+            self.evaluate(notify: true, forcePrimarySync: forcePrimarySync)
         }
     }
 
@@ -214,14 +221,18 @@ final class DisplayMonitor: DisplayMonitoring {
         }
     }
 
-    private func evaluate(notify: Bool) {
+    private func evaluate(notify: Bool, forcePrimarySync: Bool = false) {
+        let displays = primaryDisplaySystem.snapshots()
         let activeDisplayIdentifiers = Set(
-            primaryDisplaySystem.snapshots()
+            displays
                 .filter { $0.isActive }
                 .map(\.identifier)
         )
         let activeDisplaysChanged = activeDisplayIdentifiers != lastActiveDisplayIdentifiers
         lastActiveDisplayIdentifiers = activeDisplayIdentifiers
+        let mainDisplayIdentifier = primaryDisplaySystem.mainDisplayIdentifier()
+        let mainDisplayChanged = mainDisplayIdentifier != lastMainDisplayIdentifier
+        lastMainDisplayIdentifier = mainDisplayIdentifier
         let newValue = configuredDisplayID() != nil
         let displayPresenceChanged = newValue != isPresent
 
@@ -238,7 +249,7 @@ final class DisplayMonitor: DisplayMonitoring {
             }
         }
 
-        if notify, (activeDisplaysChanged || displayPresenceChanged) {
+        if notify, (forcePrimarySync || activeDisplaysChanged || mainDisplayChanged || displayPresenceChanged) {
             synchronizePrimaryDisplay()
         }
     }
@@ -276,16 +287,24 @@ final class DisplayMonitor: DisplayMonitoring {
         primaryConfigurationInProgress = true
         let succeeded = primaryDisplaySystem.apply(origins: origins)
         primaryConfigurationInProgress = false
+        let resultingMainDisplayIdentifier = primaryDisplaySystem.mainDisplayIdentifier()
+        lastMainDisplayIdentifier = resultingMainDisplayIdentifier
+        let hubState = primaryHubPresent ? "present" : "absent"
 
         if succeeded,
-           primaryDisplaySystem.mainDisplayIdentifier() == targetIdentifier {
-            GetKbdLog.event("display.primary.set", targetIdentifier)
+           resultingMainDisplayIdentifier == targetIdentifier {
+            GetKbdLog.event(
+                "display.primary.set",
+                "target=\(targetIdentifier), hub=\(hubState)"
+            )
         } else {
             GetKbdLog.error(
                 "display.primary.failed",
-                succeeded
-                    ? "The requested display did not become primary"
-                    : "Unable to apply primary-display configuration"
+                "target=\(targetIdentifier), hub=\(hubState), reason=" + (
+                    succeeded
+                        ? "The requested display did not become primary"
+                        : "Unable to apply primary-display configuration"
+                )
             )
         }
 

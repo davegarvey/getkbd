@@ -154,7 +154,7 @@ final class DisplayPrimaryTests: XCTestCase {
         XCTAssertEqual(system.mainIdentifier, "external")
     }
 
-    func testSleepingSuppressesPrimaryChangeUntilWake() {
+    func testSleepingSuppressesPrimaryChangeUntilWake() async {
         let system = FakeDisplayPrimarySystem(
             snapshots: [
                 display("built-in", builtIn: true, active: true, x: -1440),
@@ -164,6 +164,7 @@ final class DisplayPrimaryTests: XCTestCase {
         )
         let monitor = DisplayMonitor(
             configuredDisplayIdentifier: "external",
+            debounceInterval: 0,
             primaryDisplaySystem: system
         )
 
@@ -172,8 +173,91 @@ final class DisplayPrimaryTests: XCTestCase {
         XCTAssertEqual(system.applyCallCount, 0)
 
         monitor.setPrimaryDisplaySleeping(false)
+        for _ in 0..<100 where system.applyCallCount == 0 {
+            await Task.yield()
+        }
         XCTAssertEqual(system.applyCallCount, 1)
         XCTAssertEqual(system.mainIdentifier, "built-in")
+        monitor.stop()
+    }
+
+    func testPrimaryOnlyDisplayChangeTriggersSynchronization() async {
+        let system = FakeDisplayPrimarySystem(
+            snapshots: [
+                display("built-in", builtIn: true, active: true, x: -1440),
+                display("external", builtIn: false, active: true, x: 0)
+            ],
+            mainIdentifier: "built-in"
+        )
+        let monitor = DisplayMonitor(
+            configuredDisplayIdentifier: "external",
+            debounceInterval: 0,
+            primaryDisplaySystem: system
+        )
+        _ = monitor.start()
+        monitor.updatePrimaryHubSignal(configured: true, present: false)
+
+        system.mainIdentifier = "external"
+        monitor.scheduleEvaluation()
+        for _ in 0..<100 where system.applyCallCount == 0 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(system.applyCallCount, 1)
+        XCTAssertEqual(system.mainIdentifier, "built-in")
+        monitor.stop()
+    }
+
+    func testWakeWithHubPresentTargetsExternalDisplay() async {
+        let system = FakeDisplayPrimarySystem(
+            snapshots: [
+                display("built-in", builtIn: true, active: true, x: 0),
+                display("external", builtIn: false, active: true, x: 1440)
+            ],
+            mainIdentifier: "built-in"
+        )
+        let monitor = DisplayMonitor(
+            configuredDisplayIdentifier: "external",
+            debounceInterval: 0,
+            primaryDisplaySystem: system
+        )
+
+        monitor.setPrimaryDisplaySleeping(true)
+        monitor.updatePrimaryHubSignal(configured: true, present: true)
+        monitor.setPrimaryDisplaySleeping(false)
+        for _ in 0..<100 where system.applyCallCount == 0 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(system.applyCallCount, 1)
+        XCTAssertEqual(system.mainIdentifier, "external")
+        monitor.stop()
+    }
+
+    func testWakeUsesFreshHubSignalBeforeForcedEvaluation() async {
+        let system = FakeDisplayPrimarySystem(
+            snapshots: [
+                display("built-in", builtIn: true, active: true, x: -1440),
+                display("external", builtIn: false, active: true, x: 0)
+            ],
+            mainIdentifier: "built-in"
+        )
+        let monitor = DisplayMonitor(
+            configuredDisplayIdentifier: "external",
+            debounceInterval: 50.0 / 1_000.0,
+            primaryDisplaySystem: system
+        )
+
+        monitor.setPrimaryDisplaySleeping(true)
+        monitor.updatePrimaryHubSignal(configured: true, present: true)
+
+        monitor.setPrimaryDisplaySleeping(false)
+        monitor.updatePrimaryHubSignal(configured: true, present: false)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(system.applyCallCount, 1)
+        XCTAssertEqual(system.mainIdentifier, "built-in")
+        monitor.stop()
     }
 
     func testActiveDisplayChangeSynchronizesOnceForRepeatedNotifications() async {

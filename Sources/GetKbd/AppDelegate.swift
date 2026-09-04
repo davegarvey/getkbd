@@ -74,11 +74,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         sleepMonitor.onDidWake = { [weak self] in
             guard let self else { return }
-            self.displayMonitor.setPrimaryDisplaySleeping(false)
+            self.displayMonitor.setPrimaryDisplaySleeping(true)
+            self.usbHubMonitor.refresh()
             self.displayMonitor.updatePrimaryHubSignal(
                 configured: self.settingsStore.value.selectedUSBHub != nil,
                 present: self.usbHubMonitor.isPresent
             )
+            self.displayMonitor.setPrimaryDisplaySleeping(false)
             self.ownershipController.didWake(
                 monitorPresent: self.displayMonitor.isPresent,
                 usbHubPresent: self.usbHubMonitor.isPresent

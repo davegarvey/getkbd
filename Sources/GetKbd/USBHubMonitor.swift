@@ -97,6 +97,43 @@ final class USBHubMonitor {
         GetKbdLog.event("usb.hub.monitor.started", "hubs=\(connectedHubs.count)")
     }
 
+    func refresh() {
+        guard isStarted else { return }
+        guard let refreshedHubs = Self.enumerateHubs() else {
+            GetKbdLog.error("usb.hub.monitor.refresh.failed", "Unable to enumerate USB devices")
+            return
+        }
+
+        let devicesChanged = connectedHubs.count != refreshedHubs.count ||
+            connectedHubs.contains { entry in
+                refreshedHubs[entry.key] != entry.value
+            }
+        connectedHubs = refreshedHubs
+        if devicesChanged {
+            onDevicesChanged?()
+        }
+
+        presenceTask?.cancel()
+        presenceTask = nil
+        let newValue = configuredHubIdentifier.map { identifier in
+            connectedHubs.values.contains { $0.identifier == identifier }
+        } ?? false
+        rawPresence = newValue
+
+        GetKbdLog.event(
+            "usb.hub.monitor.refreshed",
+            "hubs=\(connectedHubs.count), present=\(newValue)"
+        )
+
+        guard newValue != isPresent else { return }
+        isPresent = newValue
+        GetKbdLog.event(
+            isPresent ? "usb.hub.connected" : "usb.hub.disconnected",
+            configuredHubIdentifier ?? "none"
+        )
+        onChange?(isPresent)
+    }
+
     func stop() {
         guard isStarted || notificationPort != nil else { return }
 
@@ -232,6 +269,29 @@ final class USBHubMonitor {
 
         guard let descriptor = descriptor(for: service) else { return nil }
         return DeviceEvent(registryID: registryID, descriptor: descriptor, isRemoval: false)
+    }
+
+    private static func enumerateHubs() -> [UInt64: USBHubDescriptor]? {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(
+            kIOMainPortDefault,
+            IOServiceMatching("IOUSBHostDevice"),
+            &iterator
+        ) == kIOReturnSuccess else {
+            return nil
+        }
+        defer { IOObjectRelease(iterator) }
+
+        var hubs: [UInt64: USBHubDescriptor] = [:]
+        while let service = nextService(iterator) {
+            defer { IOObjectRelease(service) }
+            guard let event = event(for: service, isRemoval: false),
+                  let descriptor = event.descriptor else {
+                continue
+            }
+            hubs[event.registryID] = descriptor
+        }
+        return hubs
     }
 
     private static func descriptor(for service: io_service_t) -> USBHubDescriptor? {
