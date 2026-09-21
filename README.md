@@ -21,11 +21,16 @@ Run these commands on each Mac:
 ```sh
 git clone https://github.com/davegarvey/getkbd.git
 cd getkbd
-./scripts/build-app.sh release
-open .build/release/getkbd.app
+./scripts/install-app.sh
 ```
 
-You can drag `.build/release/getkbd.app` into `/Applications` after building.
+The script builds the release app and copies it to `~/Applications/getkbd.app`, where Spotlight can find it.
+Press **Command-Space**, type `getkbd`, and press Return. To install into another writable Applications
+folder, pass it as an argument, for example:
+
+```sh
+./scripts/install-app.sh /Applications
+```
 
 If macOS blocks the app, Control-click it, choose **Open**, and confirm.
 
@@ -99,6 +104,25 @@ press Return.
 - **Refresh device lists**: reload available keyboards, displays, and USB hubs.
 
 ## Troubleshooting
+
+### Build errors
+
+`scripts/build-app.sh` uses the Swift toolchain selected by Xcode or Command Line Tools via `xcrun`,
+rather than whichever `swift` happens to appear first on `PATH`.
+
+If the build reports errors such as `unknown argument: -target-arch-variant`, `no such module
+'Combine'`, or that the SDK is unsupported by the compiler, check the selected developer tools and SDK:
+
+```sh
+xcode-select -p
+xcrun swift --version
+xcrun --show-sdk-version
+```
+
+The compiler and SDK must come from compatible Xcode/Command Line Tools releases. After a macOS
+upgrade, check **System Settings > General > Software Update** for matching Command Line Tools. If
+none are offered, install the compatible Command Line Tools package from [Apple Developer
+Downloads](https://developer.apple.com/download/all/).
 
 - Pair the keyboard with both Macs before using getkbd.
 - Select the physical USB hub that appears only when that Mac is active, not a HID device that
