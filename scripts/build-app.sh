@@ -4,8 +4,8 @@ set -euo pipefail
 
 configuration="${1:-release}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
-swift build --package-path "$root" -c "$configuration"
-bin_path="$(swift build --package-path "$root" -c "$configuration" --show-bin-path)"
+xcrun swift build --package-path "$root" -c "$configuration"
+bin_path="$(xcrun swift build --package-path "$root" -c "$configuration" --show-bin-path)"
 app="$root/.build/$configuration/getkbd.app"
 contents="$app/Contents"
 
