@@ -5,9 +5,9 @@ enum GetKbdLog {
 
     static func event(_ name: String, _ message: String = "") {
         if message.isEmpty {
-            logger.info("\(name, privacy: .public)")
+            logger.notice("\(name, privacy: .public)")
         } else {
-            logger.info("\(name, privacy: .public): \(message, privacy: .public)")
+            logger.notice("\(name, privacy: .public): \(message, privacy: .public)")
         }
     }
 
