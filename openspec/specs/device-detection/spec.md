@@ -104,12 +104,6 @@ without requiring a peer service or network connection.
   disconnects
 - **THEN** getkbd SHALL not change the selected keyboard state
 
-#### Scenario: Device list refresh is requested
-
-- **WHEN** the user chooses Refresh device lists
-- **THEN** getkbd SHALL reload the current local keyboard, display, and USB hub
-  choices and conditions
-
 ### Requirement: Identify the monitor's hub group locally
 
 The system SHALL identify the monitor's hub group locally, without a peer
