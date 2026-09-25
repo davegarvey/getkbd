@@ -57,56 +57,41 @@ desk-display list.
 
 ### Requirement: Detect physical USB hubs for KVM switching
 
-The system SHALL list connected USB host devices that expose USB device class 9,
-track presence of the selected hub using a stable descriptor, and debounce its
-presence before notifying ownership logic.
+The system SHALL observe connected USB host devices that expose USB device class 9,
+track the presence of the selected hub group using stable descriptors, and
+debounce that presence before notifying ownership logic. The hub group SHALL be
+present when any hub in the group is present and absent when none is present.
 
 #### Scenario: USB hub is connected
 
-- **WHEN** a qualifying physical USB hub is connected
-- **THEN** getkbd SHALL expose its name, manufacturer, vendor ID, product ID, and
-  identifier in the settings list and update its selected-presence condition
+- **WHEN** a qualifying physical USB hub that belongs to the selected group is
+  connected and remains present after debounce
+- **THEN** getkbd SHALL mark the group present if it was absent and notify
+  ownership logic
 
 #### Scenario: Non-hub USB device is connected
 
 - **WHEN** a USB device does not expose device class 9 or lacks vendor/product
   identifiers
-- **THEN** getkbd SHALL omit it from the KVM hub list
+- **THEN** getkbd SHALL ignore it for hub detection
 
 #### Scenario: Selected hub is removed
 
-- **WHEN** the selected USB hub terminates and remains absent after debounce
-- **THEN** getkbd SHALL mark it absent, refresh the hub list, and notify ownership
-  logic
+- **WHEN** the last present hub in the selected group terminates and the group
+  remains absent after debounce
+- **THEN** getkbd SHALL mark the group absent and notify ownership logic
+
+#### Scenario: One hub in the group is slower than another
+
+- **WHEN** hubs in the group arrive or leave at slightly different times
+- **THEN** getkbd SHALL report a single transition for the group rather than one
+  per hub
 
 #### Scenario: Hub has no serial number
 
 - **WHEN** a qualifying hub has no serial number
 - **THEN** its identifier SHALL be derived from its vendor, product, name, and
   manufacturer values
-
-### Requirement: Identify the selected hub locally
-
-The system SHALL support local before-and-after hub identification without a peer
-service.
-
-#### Scenario: Local identification finds exactly one changed hub
-
-- **WHEN** the user starts hub identification and exactly one local hub identifier
-  changes
-- **THEN** getkbd SHALL select that changed hub
-
-#### Scenario: Several hubs change during identification
-
-- **WHEN** more than one hub identifier changes during identification
-- **THEN** getkbd SHALL cancel automatic selection and instruct the user to select
-  the KVM hub manually
-
-#### Scenario: No hub changes during identification
-
-- **WHEN** the user changes the monitor input but no qualifying hub changes
-- **THEN** getkbd SHALL report that no detectable USB signal was found and SHALL
-  offer manual hub selection
 
 ### Requirement: Refresh local device conditions from system events
 
@@ -124,3 +109,34 @@ without requiring a peer service or network connection.
 - **WHEN** the user chooses Refresh device lists
 - **THEN** getkbd SHALL reload the current local keyboard, display, and USB hub
   choices and conditions
+
+### Requirement: Identify the monitor's hub group locally
+
+The system SHALL identify the monitor's hub group locally, without a peer
+service, by observing which hubs change when the user switches the monitor to the
+other Mac and back.
+
+#### Scenario: Hubs leave and return with the switch
+
+- **WHEN** during identification one or more hubs disappear after the first
+  monitor switch and reappear after the second
+- **THEN** getkbd SHALL select all of those hubs as the hub group
+
+#### Scenario: Hubs arrive and leave with the switch
+
+- **WHEN** identification starts while the monitor is showing the other Mac and
+  one or more hubs appear after the first switch and disappear after the second
+- **THEN** getkbd SHALL select all of those hubs as the hub group
+
+#### Scenario: An unrelated device changes during identification
+
+- **WHEN** a hub changes only once during identification, for example because a
+  device was connected partway through
+- **THEN** getkbd SHALL exclude that hub from the group
+
+#### Scenario: No hub changes in both directions
+
+- **WHEN** identification finishes or is cancelled and no hub changed in both
+  directions
+- **THEN** getkbd SHALL not change the stored hub group and SHALL report that the
+  switch was not detected

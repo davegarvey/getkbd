@@ -18,7 +18,7 @@
 ## 4. Main-display preference
 
 - [x] 4.1 Add `primarySyncEnabled` to `DisplayMonitor`, skip synchronisation when disabled, force an evaluation when enabled, and verify with `DisplayPrimaryTests` cases for disabled, re-enabled, and wake while disabled
-- [ ] 4.2 Apply `switchMainDisplay` from settings at launch and on change in `AppDelegate`, and verify by toggling it in the running app
+- [x] 4.2 Apply `switchMainDisplay` from settings at launch and on change in `AppDelegate`, and verify by toggling it in the running app
 
 ## 5. Menu
 
@@ -30,10 +30,10 @@
 - [x] 6.1 Replace `SettingsView` with a grouped `Form` (Devices: keyboard, monitor, monitor switching; Behaviour: main display, open at login) at about 480pt wide, and resize `SettingsWindowController` to fit; verify visually in the running app
 - [x] 6.2 Add the setup section shown while setup is incomplete, with the identification phase label, the completion confirmation, and the reminder to set up the other Mac; verify by clearing settings and completing setup on the BenQ MA270S
 - [x] 6.3 Auto-select the keyboard and monitor when exactly one candidate exists, and verify with a view-model test
-- [ ] 6.4 Show row notes only for an offline monitor or a login item requiring approval (no keyboard note, because a released keyboard is unpaired on that Mac), and verify each by simulating the condition
+- [x] 6.4 Show row notes only for an offline monitor or a login item requiring approval (no keyboard note, because a released keyboard is unpaired on that Mac), and verify each by simulating the condition
 
 ## 7. Checks and documentation
 
 - [x] 7.1 Add `MenuStatus`, `HubIdentification`, and settings-migration cases to `Checks/GetKbdChecks/main.swift` and verify `scripts/run-checks.sh` passes without XCTest
 - [x] 7.2 Update the README setup, use, manual switching, controls and troubleshooting sections to remove the shortcut, the hub list and the release-then-get flow, and verify no remaining references with `git grep -i -E 'shortcut|identify input signal|Select the USB hub'`
-- [ ] 7.3 Run `swift build`, `scripts/run-checks.sh`, `swift test` where XCTest is available, and `openspec validate simplify-ui --strict`, then install the app on both Macs and verify a full monitor switch in each direction using the persisted log
+- [x] 7.3 Run `swift build`, `scripts/run-checks.sh`, `swift test` where XCTest is available, and `openspec validate simplify-ui --strict`, then install the app on both Macs and verify a full monitor switch in each direction using the persisted log
