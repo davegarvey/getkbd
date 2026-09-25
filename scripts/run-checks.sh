@@ -19,6 +19,8 @@ swiftc \
     "$ROOT/Sources/GetKbd/MenuBarController.swift" \
     "$ROOT/Sources/GetKbd/MenuStatus.swift" \
     "$ROOT/Sources/GetKbd/Models.swift" \
+    "$ROOT/Sources/GetKbd/MonitorInputControl.swift" \
+    "$ROOT/Sources/GetKbd/MonitorInputLearner.swift" \
     "$ROOT/Sources/GetKbd/OwnershipController.swift" \
     "$ROOT/Sources/GetKbd/SettingsStore.swift" \
     "$ROOT/Sources/GetKbd/SettingsWindowController.swift" \
