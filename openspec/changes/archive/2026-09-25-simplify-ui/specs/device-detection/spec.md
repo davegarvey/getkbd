@@ -1,59 +1,4 @@
-# device-detection Specification
-
-## Purpose
-
-Define how getkbd discovers paired keyboards and identifies the selected external
-display and physical KVM USB hub on the local Mac.
-
-## Requirements
-
-### Requirement: Discover paired Bluetooth keyboards
-
-The system SHALL list locally paired Bluetooth devices that identify as a keyboard
-by Bluetooth class or by a name containing "keyboard".
-
-#### Scenario: Paired keyboard is available
-
-- **WHEN** the settings window requests the keyboard list
-- **THEN** getkbd SHALL return keyboard descriptors containing a stable device
-  identifier and display name, sorted case-insensitively by name
-
-#### Scenario: Non-keyboard device is paired
-
-- **WHEN** a paired Bluetooth device is neither keyboard-class nor named as a
-  keyboard
-- **THEN** getkbd SHALL omit it from the selectable keyboard list
-
-#### Scenario: Keyboard has no usable name
-
-- **WHEN** a paired keyboard has an empty name
-- **THEN** getkbd SHALL use its Bluetooth identifier as the display name
-
-### Requirement: Detect the configured external display while physically online
-
-The system SHALL determine whether the configured display is online through local
-CoreGraphics display services, including when it has been temporarily disabled
-from the active desktop. Built-in displays SHALL be excluded from the selectable
-desk-display list.
-
-#### Scenario: External display is online
-
-- **WHEN** the configured external display is present in the online display list
-- **THEN** the display condition SHALL be present and getkbd SHALL notify the
-  ownership controller
-
-#### Scenario: Configured display is physically removed
-
-- **WHEN** the configured external display is no longer online
-- **THEN** the display condition SHALL be absent and getkbd SHALL notify the
-  ownership controller
-
-#### Scenario: Display changes settle
-
-- **WHEN** macOS emits screen or display-reconfiguration events in quick
-  succession
-- **THEN** getkbd SHALL debounce evaluation using the configured interval, which
-  defaults to 1.5 seconds, before publishing a changed physical condition
+## MODIFIED Requirements
 
 ### Requirement: Detect physical USB hubs for KVM switching
 
@@ -93,16 +38,7 @@ present when any hub in the group is present and absent when none is present.
 - **THEN** its identifier SHALL be derived from its vendor, product, name, and
   manufacturer values
 
-### Requirement: Refresh local device conditions from system events
-
-The system SHALL observe local Bluetooth, display, USB, sleep, and wake events
-without requiring a peer service or network connection.
-
-#### Scenario: Unrelated Bluetooth device changes
-
-- **WHEN** a Bluetooth device other than the selected keyboard connects or
-  disconnects
-- **THEN** getkbd SHALL not change the selected keyboard state
+## ADDED Requirements
 
 ### Requirement: Identify the monitor's hub group locally
 
@@ -134,3 +70,14 @@ other Mac and back.
   directions
 - **THEN** getkbd SHALL not change the stored hub group and SHALL report that the
   switch was not detected
+
+## REMOVED Requirements
+
+### Requirement: Identify the selected hub locally
+
+**Reason**: Replaced by "Identify the monitor's hub group locally", which selects
+every hub that leaves and returns with a monitor switch instead of requiring
+exactly one changed hub, and removes manual hub selection.
+
+**Migration**: Existing single-hub selections continue to work as a group of one.
+Run monitor-switch setup again to record the full group.

@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 final class USBHubMonitor {
-    var configuredHubIdentifier: String? {
+    var configuredHubIdentifiers: Set<String> {
         didSet {
             updateConfiguredPresence(notify: true)
         }
@@ -18,6 +18,14 @@ final class USBHubMonitor {
         connectedHubs.values.sorted {
             $0.menuTitle.localizedCaseInsensitiveCompare($1.menuTitle) == .orderedAscending
         }
+    }
+
+    private var configuredHubsConnected: Bool {
+        connectedHubs.values.contains { configuredHubIdentifiers.contains($0.identifier) }
+    }
+
+    private var configuredHubsLogValue: String {
+        configuredHubIdentifiers.isEmpty ? "none" : configuredHubIdentifiers.sorted().joined(separator: ", ")
     }
 
     private struct DeviceEvent: Sendable {
@@ -35,8 +43,8 @@ final class USBHubMonitor {
     private var rawPresence = false
     private var presenceTask: Task<Void, Never>?
 
-    init(configuredHubIdentifier: String?) {
-        self.configuredHubIdentifier = configuredHubIdentifier
+    init(configuredHubIdentifiers: Set<String>) {
+        self.configuredHubIdentifiers = configuredHubIdentifiers
     }
 
     func start() {
@@ -115,9 +123,7 @@ final class USBHubMonitor {
 
         presenceTask?.cancel()
         presenceTask = nil
-        let newValue = configuredHubIdentifier.map { identifier in
-            connectedHubs.values.contains { $0.identifier == identifier }
-        } ?? false
+        let newValue = configuredHubsConnected
         rawPresence = newValue
 
         GetKbdLog.event(
@@ -129,7 +135,7 @@ final class USBHubMonitor {
         isPresent = newValue
         GetKbdLog.event(
             isPresent ? "usb.hub.connected" : "usb.hub.disconnected",
-            configuredHubIdentifier ?? "none"
+            configuredHubsLogValue
         )
         onChange?(isPresent)
     }
@@ -187,9 +193,7 @@ final class USBHubMonitor {
     }
 
     private func updateConfiguredPresence(notify: Bool) {
-        let newValue = configuredHubIdentifier.map { identifier in
-            connectedHubs.values.contains { $0.identifier == identifier }
-        } ?? false
+        let newValue = configuredHubsConnected
 
         guard newValue != rawPresence || (!notify && newValue != isPresent) else { return }
         rawPresence = newValue
@@ -214,7 +218,7 @@ final class USBHubMonitor {
             self.isPresent = self.rawPresence
             GetKbdLog.event(
                 self.isPresent ? "usb.hub.connected" : "usb.hub.disconnected",
-                self.configuredHubIdentifier ?? "none"
+                self.configuredHubsLogValue
             )
             self.onChange?(self.isPresent)
         }

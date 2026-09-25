@@ -1,5 +1,4 @@
 import AppKit
-import Carbon
 import Foundation
 
 @MainActor
@@ -9,7 +8,6 @@ final class MenuBarController: NSObject {
     private let settingsStore: SettingsStore
     private let showSettings: () -> Void
     private let quit: () -> Void
-    private var shortcutAvailable = true
 
     init(
         ownership: OwnershipController,
@@ -23,155 +21,83 @@ final class MenuBarController: NSObject {
         self.quit = quit
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
-
-        statusItem.button?.image = Self.statusImage(for: ownership.snapshot.keyboardState)
-        statusItem.button?.image?.isTemplate = true
-        statusItem.button?.toolTip = "getkbd"
         refresh()
     }
 
     func refresh() {
-        statusItem.button?.image = Self.statusImage(for: ownership.snapshot.keyboardState)
+        let status = currentStatus
+        statusItem.button?.image = Self.statusImage(for: ownership.snapshot.keyboardState, title: status.title)
         statusItem.button?.image?.isTemplate = true
-        statusItem.button?.toolTip = tooltip
-        statusItem.menu = makeMenu()
+        statusItem.button?.toolTip = status.title
+        statusItem.menu = makeMenu(for: status)
     }
 
-    func setShortcutAvailable(_ available: Bool) {
-        shortcutAvailable = available
-        refresh()
+    private var currentStatus: MenuStatus {
+        MenuStatus.make(
+            settings: settingsStore.value,
+            snapshot: ownership.snapshot,
+            desiredState: ownership.desiredState
+        )
     }
 
-    private var tooltip: String {
-        let keyboardName = settingsStore.value.selectedKeyboard?.name ?? "Keyboard not configured"
-        return "\(keyboardName): \(ownership.snapshot.keyboardState.menuTitle)"
-    }
-
-    private func makeMenu() -> NSMenu {
+    private func makeMenu(for status: MenuStatus) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let settings = settingsStore.value
-        let snapshot = ownership.snapshot
 
-        addLabel("getkbd", to: menu, bold: true)
-
-        let keyboardName = settings.selectedKeyboard?.name ?? "Keyboard not configured"
-        addLabel(keyboardName, to: menu, bold: true)
-        addLabel(
-            snapshot.keyboardState.menuTitle,
-            to: menu,
-            color: snapshot.keyboardState == .connectedLocal ? .systemGreen : .secondaryLabelColor
+        let stateItem = NSMenuItem(title: status.title, action: nil, keyEquivalent: "")
+        stateItem.isEnabled = false
+        stateItem.attributedTitle = NSAttributedString(
+            string: status.title,
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 0),
+                .foregroundColor: NSColor.labelColor
+            ]
         )
+        menu.addItem(stateItem)
 
-        let ready = !settings.needsOnboarding
-        addLabel(
-            ready ? "Ready to switch" : "Setup needs attention",
-            to: menu,
-            secondary: true,
-            color: ready ? .systemGreen : .systemOrange
-        )
-        addLabel(
-            snapshot.usbHubPresent ? "Input signal connected" : "Input signal disconnected",
-            to: menu,
-            secondary: true
-        )
-        let displayStatus = snapshot.monitorPresent ? "Display connected" : "Display disconnected"
-        addLabel(displayStatus, to: menu, secondary: true)
-
-        if let errorMessage = snapshot.errorMessage {
-            addLabel(errorMessage, to: menu, secondary: true, color: .systemRed)
+        if let action = status.action, action != .finishSetup {
+            menu.addItem(.separator())
+            menu.addItem(item(for: action))
         }
 
         menu.addItem(.separator())
 
-        let shortcut = settings.shortcut
-        let getItem = NSMenuItem(
-            title: "Get Keyboard",
-            action: #selector(getKeyboard),
-            keyEquivalent: shortcut.keyEquivalent
-        )
-        getItem.target = self
-        getItem.keyEquivalentModifierMask = Self.cocoaModifiers(for: shortcut)
-        getItem.isEnabled = settings.selectedKeyboard != nil && !snapshot.isBusy
-
-        let releaseItem = NSMenuItem(
-            title: "Release Keyboard",
-            action: #selector(releaseKeyboard),
-            keyEquivalent: ""
-        )
-        releaseItem.target = self
-        releaseItem.isEnabled = settings.selectedKeyboard != nil && !snapshot.isBusy
-
-        if snapshot.keyboardState == .connectedLocal {
-            menu.addItem(releaseItem)
-            menu.addItem(getItem)
-        } else {
-            menu.addItem(getItem)
-            menu.addItem(releaseItem)
-        }
-
-        if snapshot.keyboardState == .failed {
-            let retryItem = NSMenuItem(
-                title: ownership.desiredState == .disconnected ? "Retry Release" : "Retry Get Keyboard",
-                action: #selector(retryKeyboard),
-                keyEquivalent: ""
-            )
-            retryItem.target = self
-            retryItem.isEnabled = settings.selectedKeyboard != nil
-            menu.addItem(retryItem)
-        }
-
-        menu.addItem(.separator())
-
-        let settingsTitle = ready ? "Settings..." : "Finish Setup..."
+        let settingsTitle = status.action == .finishSetup ? "Finish Setup…" : "Settings…"
         let settingsItem = NSMenuItem(title: settingsTitle, action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
-        settingsItem.keyEquivalentModifierMask = [.command]
         menu.addItem(settingsItem)
-
-        let shortcutTitle = shortcutAvailable
-            ? "Shortcut: \(shortcut.displayString)"
-            : "Shortcut: \(shortcut.displayString) (unavailable)"
-        addLabel(shortcutTitle, to: menu, secondary: true)
 
         let quitItem = NSMenuItem(title: "Quit getkbd", action: #selector(quitApplication), keyEquivalent: "q")
         quitItem.target = self
-        quitItem.keyEquivalentModifierMask = [.command]
         menu.addItem(quitItem)
 
         return menu
     }
 
-    private func addLabel(
-        _ title: String,
-        to menu: NSMenu,
-        bold: Bool = false,
-        secondary: Bool = false,
-        color: NSColor? = nil
-    ) {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        if bold {
-            item.attributedTitle = NSAttributedString(
-                string: title,
-                attributes: [
-                    .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize),
-                    .foregroundColor: color ?? NSColor.labelColor
-                ]
-            )
-        } else if secondary || color != nil {
-            item.attributedTitle = NSAttributedString(
-                string: title,
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: secondary ? NSFont.smallSystemFontSize : NSFont.systemFontSize),
-                    .foregroundColor: color ?? NSColor.secondaryLabelColor
-                ]
-            )
+    private func item(for action: MenuAction) -> NSMenuItem {
+        let title: String
+        let selector: Selector
+        switch action {
+        case .release:
+            title = "Release Keyboard"
+            selector = #selector(releaseKeyboard)
+        case .get:
+            title = "Get Keyboard"
+            selector = #selector(getKeyboard)
+        case .retry:
+            title = "Try Again"
+            selector = #selector(retryKeyboard)
+        case .finishSetup:
+            title = "Finish Setup…"
+            selector = #selector(openSettings)
         }
-        menu.addItem(item)
+
+        let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+        item.target = self
+        return item
     }
 
-    private static func statusImage(for state: KeyboardConnectionState) -> NSImage? {
+    private static func statusImage(for state: KeyboardConnectionState, title: String) -> NSImage? {
         let symbolName: String
         switch state {
         case .failed:
@@ -182,16 +108,7 @@ final class MenuBarController: NSObject {
             symbolName = "keyboard.fill"
         }
 
-        return NSImage(systemSymbolName: symbolName, accessibilityDescription: state.menuTitle)
-    }
-
-    private static func cocoaModifiers(for shortcut: ShortcutConfiguration) -> NSEvent.ModifierFlags {
-        var flags: NSEvent.ModifierFlags = []
-        if shortcut.modifiers & UInt32(controlKey) != 0 { flags.insert(.control) }
-        if shortcut.modifiers & UInt32(optionKey) != 0 { flags.insert(.option) }
-        if shortcut.modifiers & UInt32(shiftKey) != 0 { flags.insert(.shift) }
-        if shortcut.modifiers & UInt32(cmdKey) != 0 { flags.insert(.command) }
-        return flags
+        return NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
     }
 
     @objc private func getKeyboard() {

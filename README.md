@@ -37,38 +37,39 @@ If macOS blocks the app, Control-click it, choose **Open**, and confirm.
 ## Setup
 
 1. Pair the Apple Magic Keyboard with both Macs in **System Settings > Bluetooth**.
-2. Launch getkbd on both Macs.
-3. Open **Settings** and select the same keyboard and external monitor on both Macs.
-4. Select the USB hub connected through the monitor KVM on each Mac.
-5. If the hub is difficult to identify, click **Identify input signal**, change the monitor input,
-   and let getkbd select the hub whose connection changes.
-6. Repeat the setup on the other Mac.
+2. Launch getkbd on both Macs. Settings opens automatically the first time.
+3. Choose the shared keyboard and monitor. getkbd selects them for you when there is only one of
+   each.
+4. Under **Teach getkbd your monitor**, click **Start**, switch the monitor to your other Mac, then
+   switch it back. getkbd detects the USB connection that follows the monitor input.
+5. Repeat the setup on the other Mac.
 
-The selected hub must appear on only the Mac currently selected by the monitor input. No pairing,
-network connection, or coordination between the two getkbd instances is required.
+No pairing, network connection, or coordination between the two getkbd instances is required.
 
 ## Use
 
 1. Leave getkbd running on both Macs.
 2. Change the monitor input with the monitor controls or compatible input-switching software.
-3. The Mac where the selected USB hub appears claims the keyboard.
-4. The Mac where the hub disappears releases the keyboard and, when its built-in display is
-   active, makes that display primary.
+3. The Mac the monitor switches to claims the keyboard.
+4. The Mac the monitor switches away from releases the keyboard and, when its built-in display is
+   active, makes that display the main display.
 
 The selected display is a safety condition. If it is physically absent, getkbd releases the
-keyboard and will not automatically claim it. If both Macs see the selected hub, the hardware
+keyboard and will not automatically claim it. If both Macs see the monitor's USB hub, the hardware
 does not expose a unique active-host signal and automatic switching is not safe.
 
 ## Display behavior
 
-When the selected monitor and USB hub are configured, getkbd follows the local hub signal while
-keeping both displays extended:
+When setup is complete and **Switch the main display with the monitor** is on (the default),
+getkbd follows the monitor input while keeping both displays extended:
 
-- When the selected USB hub is present, the selected external monitor is primary.
-- When the selected USB hub is absent and the laptop display is active, the built-in display is
-  primary.
-- When the selected USB hub is absent while the laptop is in clamshell mode, getkbd leaves the
-  active external display as macOS has configured it.
+- When the monitor is showing this Mac, the external monitor is primary.
+- When the monitor is showing the other Mac and the laptop display is active, the built-in
+  display is primary, so the menu bar and new windows stay on a screen you can see.
+- When the monitor is showing the other Mac while the laptop is in clamshell mode, getkbd leaves
+  the active external display as macOS has configured it.
+
+When the setting is off, getkbd does not change the main display.
 
 getkbd changes only the primary-display role. It does not change display enablement, mirroring,
 mode, or relative arrangement, and it does not move application windows directly. macOS remains
@@ -85,23 +86,18 @@ role change fails, keyboard handoff continues independently.
 Closed-lid use is supported when the external display is active. If the display cable is removed,
 or the Mac sleeps, getkbd releases the keyboard and reevaluates all local signals after wake.
 
-## Manual switching
+## Menu
 
-- Choose **Release Keyboard** on the Mac currently using the keyboard.
-- Choose **Get Keyboard** on the other Mac.
-- Use the configured global shortcut to get the keyboard manually.
+The menu shows where the keyboard is and, when one applies, a single action:
 
-Keep the keyboard awake during pairing. If getkbd shows a passkey, type it on the keyboard and
-press Return.
+- **Release Keyboard**: shown when this Mac has the keyboard.
+- **Get Keyboard**: shown when the monitor is showing this Mac but the keyboard is not connected,
+  or when the monitor is not connected.
+- **Try Again**: shown after a claim or release fails.
 
-## Controls
-
-- **Get Keyboard**: claim the selected keyboard.
-- **Release Keyboard**: release the selected keyboard.
-- **Settings**: change the selected keyboard, display, USB hub, shortcut, and launch-at-login
-  preference.
-- **Identify input signal**: locally detect the USB connection that follows the monitor input.
-- **Refresh device lists**: reload available keyboards, displays, and USB hubs.
+When the monitor is showing the other Mac, the menu offers no keyboard action; switch the monitor
+input instead. Keep the keyboard awake during pairing. If getkbd shows a passkey, type it on the
+keyboard and press Return.
 
 ## Troubleshooting
 
@@ -125,8 +121,8 @@ none are offered, install the compatible Command Line Tools package from [Apple 
 Downloads](https://developer.apple.com/download/all/).
 
 - Pair the keyboard with both Macs before using getkbd.
-- Select the physical USB hub that appears only when that Mac is active, not a HID device that
-  remains connected on both Macs.
+- If monitor switching setup does not detect the switch, make sure the monitor's USB upstream
+  cable is connected to this Mac, then click **Try Again**.
 - If the display is missing after reconnecting, open **Display Settings** and verify the cable and
   selected monitor input before retrying the switch.
 - Wake or power-cycle the keyboard if pairing fails.

@@ -140,6 +140,14 @@ final class DisplayMonitor: DisplayMonitoring {
         synchronizePrimaryDisplay()
     }
 
+    /// When false, getkbd leaves the primary display as it is.
+    var primarySyncEnabled = true {
+        didSet {
+            guard primarySyncEnabled, !oldValue else { return }
+            scheduleEvaluation(forcePrimarySync: true)
+        }
+    }
+
     func setPrimaryDisplaySleeping(_ sleeping: Bool) {
         primaryIsSleeping = sleeping
         guard !sleeping else { return }
@@ -255,7 +263,8 @@ final class DisplayMonitor: DisplayMonitoring {
     }
 
     private func synchronizePrimaryDisplay() {
-        guard !primaryIsSleeping,
+        guard primarySyncEnabled,
+              !primaryIsSleeping,
               primaryHubConfigured,
               let configuredDisplayIdentifier else {
             return

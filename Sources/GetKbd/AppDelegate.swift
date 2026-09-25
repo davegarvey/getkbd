@@ -4,7 +4,6 @@ import Foundation
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsStore = SettingsStore()
-    private let shortcutController = ShortcutController()
     private let sleepMonitor = SleepMonitor()
 
     private var keyboardController: IOBluetoothKeyboardController!
@@ -20,7 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = settingsStore.value
         keyboardController = IOBluetoothKeyboardController(configuredKeyboard: settings.selectedKeyboard)
         displayMonitor = DisplayMonitor(configuredDisplayIdentifier: settings.selectedDisplay?.identifier)
-        usbHubMonitor = USBHubMonitor(configuredHubIdentifier: settings.selectedUSBHub?.identifier)
+        usbHubMonitor = USBHubMonitor(configuredHubIdentifiers: settings.selectedUSBHubIdentifiers)
+        displayMonitor.primarySyncEnabled = settings.switchMainDisplay
         ownershipController = OwnershipController(
             keyboard: keyboardController
         )
@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usbHubMonitor.onChange = { [weak self] isPresent in
             guard let self else { return }
             self.displayMonitor.updatePrimaryHubSignal(
-                configured: self.settingsStore.value.selectedUSBHub != nil,
+                configured: !self.settingsStore.value.selectedUSBHubs.isEmpty,
                 present: isPresent
             )
             if isPresent {
@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.displayMonitor.setPrimaryDisplaySleeping(true)
             self.usbHubMonitor.refresh()
             self.displayMonitor.updatePrimaryHubSignal(
-                configured: self.settingsStore.value.selectedUSBHub != nil,
+                configured: !self.settingsStore.value.selectedUSBHubs.isEmpty,
                 present: self.usbHubMonitor.isPresent
             )
             self.displayMonitor.setPrimaryDisplaySleeping(false)
@@ -87,11 +87,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        shortcutController.onShortcut = { [weak self] in
-            self?.ownershipController.manualClaim()
-        }
-        _ = shortcutController.register(settings.shortcut)
-
         sleepMonitor.start()
         let monitorPresent = displayMonitor.start()
         usbHubMonitor.start()
@@ -100,11 +95,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             usbHubPresent: usbHubMonitor.isPresent
         )
         displayMonitor.updatePrimaryHubSignal(
-            configured: settings.selectedUSBHub != nil,
+            configured: !settings.selectedUSBHubs.isEmpty,
             present: usbHubMonitor.isPresent
         )
-        menuBarController.setShortcutAvailable(shortcutController.isRegistered)
-
         if settings.launchAtLogin {
             _ = LoginItemController.setEnabled(true)
         }
@@ -123,7 +116,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displayMonitor.stop()
         usbHubMonitor.stop()
         keyboardController.stop()
-        shortcutController.unregister()
     }
 
     private func showSettings() {
@@ -148,25 +140,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func apply(_ settings: AppSettings) {
         let previous = settingsStore.value
-        var effectiveSettings = settings
-        var shortcutFailed = false
-        if previous.shortcut != settings.shortcut,
-           !shortcutController.register(settings.shortcut) {
-            effectiveSettings.shortcut = previous.shortcut
-            shortcutFailed = true
-        }
+        settingsStore.replace(settings)
 
-        settingsStore.replace(effectiveSettings)
-
-        if previous.selectedDisplay?.identifier != effectiveSettings.selectedDisplay?.identifier {
-            displayMonitor.configuredDisplayIdentifier = effectiveSettings.selectedDisplay?.identifier
+        if previous.selectedDisplay?.identifier != settings.selectedDisplay?.identifier {
+            displayMonitor.configuredDisplayIdentifier = settings.selectedDisplay?.identifier
         }
-        if previous.selectedUSBHub?.identifier != effectiveSettings.selectedUSBHub?.identifier {
-            usbHubMonitor.configuredHubIdentifier = effectiveSettings.selectedUSBHub?.identifier
+        if previous.selectedUSBHubIdentifiers != settings.selectedUSBHubIdentifiers {
+            usbHubMonitor.configuredHubIdentifiers = settings.selectedUSBHubIdentifiers
         }
+        displayMonitor.primarySyncEnabled = settings.switchMainDisplay
 
         displayMonitor.updatePrimaryHubSignal(
-            configured: effectiveSettings.selectedUSBHub != nil,
+            configured: !settings.selectedUSBHubs.isEmpty,
             present: usbHubMonitor.isPresent
         )
 
@@ -175,15 +160,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             usbHubPresent: usbHubMonitor.isPresent
         )
 
-        if previous.selectedKeyboard != effectiveSettings.selectedKeyboard {
-            ownershipController.reconfigureKeyboard(to: effectiveSettings.selectedKeyboard)
+        if previous.selectedKeyboard != settings.selectedKeyboard {
+            ownershipController.reconfigureKeyboard(to: settings.selectedKeyboard)
         }
 
-        if shortcutFailed {
-            settingsWindowController?.reload()
-            settingsWindowController?.showMessage("That shortcut could not be registered.")
-        }
-        menuBarController.setShortcutAvailable(shortcutController.isRegistered)
         menuBarController.refresh()
     }
 }

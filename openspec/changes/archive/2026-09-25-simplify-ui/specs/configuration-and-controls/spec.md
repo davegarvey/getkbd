@@ -1,11 +1,4 @@
-# configuration-and-controls Specification
-
-## Purpose
-
-Define getkbd's local configuration, menu-bar status and actions, settings and
-setup workflow, and login startup experience.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Persist local application settings
 
@@ -150,6 +143,8 @@ and stop observers on termination.
 - **THEN** getkbd SHALL leave the display configuration unchanged and SHALL not
   automatically release the keyboard as a quit side effect
 
+## ADDED Requirements
+
 ### Requirement: Change settings in a compact form
 
 The settings window SHALL present a compact form that allows the user to change
@@ -175,6 +170,7 @@ contain manual keyboard controls or explanatory text about internal detection.
 - **WHEN** the user chooses to set up monitor switching again and the new setup
   completes
 - **THEN** getkbd SHALL replace the stored hub group with the newly detected group
+
 
 ### Requirement: Show concise menu-bar status and actions
 
@@ -233,3 +229,32 @@ to reflect the keyboard state.
 
 - **WHEN** the user chooses Get Keyboard or Release Keyboard
 - **THEN** getkbd SHALL request the corresponding manual ownership action
+
+
+## REMOVED Requirements
+
+### Requirement: Configure local switching devices
+
+**Reason**: Replaced by "Change settings in a compact form", which removes the
+shortcut and USB hub list and adds the main-display preference.
+
+**Migration**: Use the compact settings form. Hub selection is replaced by
+monitor-switch setup.
+
+### Requirement: Provide live menu-bar status and manual actions
+
+**Reason**: Replaced by "Show concise menu-bar status and actions", which shows
+one state line and only the action that fits the current state.
+
+**Migration**: None required. Display and hub state are no longer listed in the
+menu; Release Keyboard, Get Keyboard and Try Again appear when applicable.
+
+### Requirement: Register and edit the global shortcut
+
+**Reason**: The shortcut invokes Get Keyboard, which cannot succeed on the Mac the
+monitor is not showing while the other Mac holds the keyboard, and it is not used
+in practice. Switching the monitor input is the switching action.
+
+**Migration**: Switch the monitor input with its controls or software. Use Get
+Keyboard or Release Keyboard in the menu for recovery. A stored shortcut is
+ignored.

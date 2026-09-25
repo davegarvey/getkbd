@@ -17,7 +17,6 @@ let package = Package(
             exclude: ["Resources"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
-                .linkedFramework("Carbon"),
                 .linkedFramework("IOBluetooth"),
                 .linkedFramework("IOKit"),
                 .linkedFramework("ServiceManagement")
