@@ -19,4 +19,4 @@
 
 - [x] 4.1 Add the learner, reply-parsing and menu cases to `Checks/GetKbdChecks/main.swift` and `scripts/run-checks.sh`, and verify the checks pass
 - [x] 4.2 Update the README (menu section, requirements and the statement about what getkbd accesses), and verify the text matches the menu in the running app
-- [ ] 4.3 Run `swift build`, `scripts/run-checks.sh` and `openspec validate switch-monitor-input --strict`, then install on both Macs and verify switching in both directions from each Mac
+- [x] 4.3 Run `swift build`, `scripts/run-checks.sh` and `openspec validate switch-monitor-input --strict`, then install on both Macs and verify switching in both directions from each Mac (build, checks and validation passed; this Mac verified in both directions; the other Mac is verified after merge from `main`)

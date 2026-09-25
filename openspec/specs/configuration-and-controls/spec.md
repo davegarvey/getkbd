@@ -10,13 +10,15 @@ setup workflow, and login startup experience.
 ### Requirement: Persist local application settings
 
 The system SHALL persist the selected keyboard, external display, USB hub group,
-main-display preference, and launch-at-login preference between runs.
+main-display preference, launch-at-login preference, and the monitor inputs
+learned for the selected display between runs.
 
 #### Scenario: First run has no saved settings
 
 - **WHEN** no valid getkbd settings are stored
 - **THEN** getkbd SHALL use unset keyboard, display, and USB hub group
-  selections, an enabled main-display preference, and enabled launch at login
+  selections, no learned monitor inputs, an enabled main-display preference, and
+  enabled launch at login
 
 #### Scenario: Valid settings are stored
 
@@ -179,8 +181,8 @@ contain manual keyboard controls or explanatory text about internal detection.
 ### Requirement: Show concise menu-bar status and actions
 
 The system SHALL provide a menu-bar menu containing one line that describes where
-the keyboard is, at most one keyboard action appropriate to that state, Settings,
-and Quit. The menu SHALL not show separate display, USB hub, or setup-readiness
+the keyboard is, at most one keyboard action appropriate to that state, at most
+one monitor action, Settings, and Quit. The menu SHALL not show separate display, USB hub, or setup-readiness
 lines, raw error text, or a keyboard shortcut. The menu-bar icon SHALL continue
 to reflect the keyboard state.
 
@@ -233,3 +235,24 @@ to reflect the keyboard state.
 
 - **WHEN** the user chooses Get Keyboard or Release Keyboard
 - **THEN** getkbd SHALL request the corresponding manual ownership action
+
+#### Scenario: Monitor can be switched to the other Mac
+
+- **WHEN** setup is complete, no operation is in progress, a hub in the group is
+  present, the monitor's input control is available, and the other Mac's input
+  is known
+- **THEN** the menu SHALL offer Switch Monitor to Other Mac
+
+#### Scenario: Monitor can be switched to this Mac
+
+- **WHEN** setup is complete, no operation is in progress, the selected display
+  is online, no hub in the group is present, the monitor's input control is
+  available, and this Mac's input is known
+- **THEN** the menu SHALL offer Switch Monitor to This Mac
+
+#### Scenario: Monitor cannot be switched
+
+- **WHEN** the monitor's input control is unavailable, the needed input is not
+  known, the selected display is offline, setup is incomplete, or an operation
+  is in progress
+- **THEN** the menu SHALL offer no monitor action
