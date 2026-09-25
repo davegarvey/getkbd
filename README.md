@@ -1,15 +1,16 @@
 # getkbd
 
 Move one Apple Magic Keyboard between two Macs using the USB signal from a monitor KVM.
-getkbd watches local display, USB, Bluetooth, and system state. It does not read keyboard or
-mouse input and does not use the network.
+getkbd watches local display, USB, Bluetooth, and system state, and can switch the monitor's input
+over the display cable. It does not read keyboard or mouse input and does not use the network.
 
 ## Requirements
 
 - Two Macs running macOS 26 or later
 - Apple Magic Keyboard paired with both Macs
 - A monitor with a KVM and a USB hub that appears only on the selected Mac
-- Monitor controls or compatible input-switching software for changing the active monitor input
+- A way to change the monitor input: its controls, compatible input-switching software, or, on
+  Apple Silicon Macs with a monitor that supports DDC/CI, the getkbd menu
 - Xcode Command Line Tools on each Mac
 
 The default build is ad-hoc signed and does not require an Apple Developer account.
@@ -49,7 +50,8 @@ No pairing, network connection, or coordination between the two getkbd instances
 ## Use
 
 1. Leave getkbd running on both Macs.
-2. Change the monitor input with the monitor controls or compatible input-switching software.
+2. Change the monitor input with the monitor controls, compatible input-switching software, or
+   **Switch Monitor to Other Mac** / **Switch Monitor to This Mac** in the getkbd menu.
 3. The Mac the monitor switches to claims the keyboard.
 4. The Mac the monitor switches away from releases the keyboard and, when its built-in display is
    active, makes that display the main display.
@@ -88,16 +90,26 @@ or the Mac sleeps, getkbd releases the keyboard and reevaluates all local signal
 
 ## Menu
 
-The menu shows where the keyboard is and, when one applies, a single action:
+The menu shows where the keyboard is and, when one applies, a single keyboard action:
 
 - **Release Keyboard**: shown when this Mac has the keyboard.
 - **Get Keyboard**: shown when the monitor is showing this Mac but the keyboard is not connected,
   or when the monitor is not connected.
 - **Try Again**: shown after a claim or release fails.
 
-When the monitor is showing the other Mac, the menu offers no keyboard action; switch the monitor
-input instead. Keep the keyboard awake during pairing. If getkbd shows a passkey, type it on the
-keyboard and press Return.
+It can also show one monitor action:
+
+- **Switch Monitor to Other Mac**: shown on the Mac the monitor is showing.
+- **Switch Monitor to This Mac**: shown on the Mac the monitor is not showing.
+
+Choosing one changes the monitor input over the display cable; getkbd then moves the keyboard as it
+does when you press the monitor's input button. getkbd learns which input belongs to each Mac by
+reading the monitor after each switch, so the actions appear after you have switched the monitor
+away from and back to a Mac once. They need an Apple Silicon Mac and a monitor that accepts DDC/CI
+input commands on that connection; otherwise they are not shown.
+
+Keep the keyboard awake during pairing. If getkbd shows a passkey, type it on the keyboard and
+press Return.
 
 ## Troubleshooting
 

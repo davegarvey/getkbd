@@ -1,5 +1,10 @@
 import Foundation
 
+enum MonitorAction: Equatable {
+    case switchToOtherMac
+    case switchToThisMac
+}
+
 enum MenuAction: Equatable {
     case release
     case get
@@ -7,12 +12,56 @@ enum MenuAction: Equatable {
     case finishSetup
 }
 
-/// The menu's single state line and the one action that fits it.
+/// The menu's single state line, the keyboard action that fits it, and an optional
+/// monitor action.
 struct MenuStatus: Equatable {
     let title: String
     let action: MenuAction?
+    var monitorAction: MonitorAction?
+
+    init(title: String, action: MenuAction?, monitorAction: MonitorAction? = nil) {
+        self.title = title
+        self.action = action
+        self.monitorAction = monitorAction
+    }
 
     static func make(
+        settings: AppSettings,
+        snapshot: OwnershipSnapshot,
+        desiredState: DesiredKeyboardState?,
+        monitorControlAvailable: Bool = false
+    ) -> MenuStatus {
+        var status = keyboardStatus(settings: settings, snapshot: snapshot, desiredState: desiredState)
+        status.monitorAction = monitorAction(
+            settings: settings,
+            snapshot: snapshot,
+            monitorControlAvailable: monitorControlAvailable
+        )
+        return status
+    }
+
+    private static func monitorAction(
+        settings: AppSettings,
+        snapshot: OwnershipSnapshot,
+        monitorControlAvailable: Bool
+    ) -> MonitorAction? {
+        guard monitorControlAvailable,
+              !settings.needsOnboarding,
+              !snapshot.isBusy,
+              snapshot.keyboardState != .connecting,
+              snapshot.keyboardState != .disconnecting,
+              snapshot.monitorPresent,
+              let inputs = settings.currentMonitorInputs else {
+            return nil
+        }
+
+        if snapshot.usbHubPresent {
+            return inputs.otherMac == nil ? nil : .switchToOtherMac
+        }
+        return inputs.thisMac == nil ? nil : .switchToThisMac
+    }
+
+    private static func keyboardStatus(
         settings: AppSettings,
         snapshot: OwnershipSnapshot,
         desiredState: DesiredKeyboardState?

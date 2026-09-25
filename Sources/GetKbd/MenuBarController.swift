@@ -7,17 +7,27 @@ final class MenuBarController: NSObject {
     private let ownership: OwnershipController
     private let settingsStore: SettingsStore
     private let showSettings: () -> Void
+    private let switchMonitor: (MonitorAction) -> Void
     private let quit: () -> Void
+
+    var monitorControlAvailable = false {
+        didSet {
+            guard monitorControlAvailable != oldValue else { return }
+            refresh()
+        }
+    }
 
     init(
         ownership: OwnershipController,
         settingsStore: SettingsStore,
         showSettings: @escaping () -> Void,
+        switchMonitor: @escaping (MonitorAction) -> Void,
         quit: @escaping () -> Void
     ) {
         self.ownership = ownership
         self.settingsStore = settingsStore
         self.showSettings = showSettings
+        self.switchMonitor = switchMonitor
         self.quit = quit
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -36,7 +46,8 @@ final class MenuBarController: NSObject {
         MenuStatus.make(
             settings: settingsStore.value,
             snapshot: ownership.snapshot,
-            desiredState: ownership.desiredState
+            desiredState: ownership.desiredState,
+            monitorControlAvailable: monitorControlAvailable
         )
     }
 
@@ -55,9 +66,15 @@ final class MenuBarController: NSObject {
         )
         menu.addItem(stateItem)
 
-        if let action = status.action, action != .finishSetup {
+        let keyboardAction = status.action == .finishSetup ? nil : status.action
+        if keyboardAction != nil || status.monitorAction != nil {
             menu.addItem(.separator())
-            menu.addItem(item(for: action))
+        }
+        if let keyboardAction {
+            menu.addItem(item(for: keyboardAction))
+        }
+        if let monitorAction = status.monitorAction {
+            menu.addItem(item(for: monitorAction))
         }
 
         menu.addItem(.separator())
@@ -97,6 +114,23 @@ final class MenuBarController: NSObject {
         return item
     }
 
+    private func item(for action: MonitorAction) -> NSMenuItem {
+        let title: String
+        let selector: Selector
+        switch action {
+        case .switchToOtherMac:
+            title = "Switch Monitor to Other Mac"
+            selector = #selector(switchMonitorToOtherMac)
+        case .switchToThisMac:
+            title = "Switch Monitor to This Mac"
+            selector = #selector(switchMonitorToThisMac)
+        }
+
+        let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+        item.target = self
+        return item
+    }
+
     private static func statusImage(for state: KeyboardConnectionState, title: String) -> NSImage? {
         let symbolName: String
         switch state {
@@ -125,6 +159,14 @@ final class MenuBarController: NSObject {
         } else {
             ownership.manualClaim()
         }
+    }
+
+    @objc private func switchMonitorToOtherMac() {
+        switchMonitor(.switchToOtherMac)
+    }
+
+    @objc private func switchMonitorToThisMac() {
+        switchMonitor(.switchToThisMac)
     }
 
     @objc private func openSettings() {

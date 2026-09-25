@@ -98,19 +98,22 @@ struct AppSettings: Codable, Equatable, Sendable {
     var selectedUSBHubs: [USBHubDescriptor]
     var switchMainDisplay: Bool
     var launchAtLogin: Bool
+    var monitorInputs: LearnedMonitorInputs?
 
     init(
         selectedKeyboard: KeyboardDescriptor?,
         selectedDisplay: DisplayDescriptor?,
         selectedUSBHubs: [USBHubDescriptor],
         switchMainDisplay: Bool,
-        launchAtLogin: Bool
+        launchAtLogin: Bool,
+        monitorInputs: LearnedMonitorInputs? = nil
     ) {
         self.selectedKeyboard = selectedKeyboard
         self.selectedDisplay = selectedDisplay
         self.selectedUSBHubs = selectedUSBHubs
         self.switchMainDisplay = switchMainDisplay
         self.launchAtLogin = launchAtLogin
+        self.monitorInputs = monitorInputs
     }
 
     static let initial = AppSettings(
@@ -127,6 +130,15 @@ struct AppSettings: Codable, Equatable, Sendable {
             selectedUSBHubs.isEmpty
     }
 
+    /// Learned inputs for the selected display, ignoring any learned for another display.
+    var currentMonitorInputs: LearnedMonitorInputs? {
+        guard let monitorInputs,
+              monitorInputs.displayIdentifier == selectedDisplay?.identifier else {
+            return nil
+        }
+        return monitorInputs
+    }
+
     var selectedUSBHubIdentifiers: Set<String> {
         Set(selectedUSBHubs.map(\.identifier))
     }
@@ -139,6 +151,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         case legacySelectedUSBHub = "selectedUSBHub"
         case switchMainDisplay
         case launchAtLogin
+        case monitorInputs
     }
 
     init(from decoder: Decoder) throws {
@@ -150,7 +163,8 @@ struct AppSettings: Codable, Equatable, Sendable {
             selectedDisplay: try container.decodeIfPresent(DisplayDescriptor.self, forKey: .selectedDisplay),
             selectedUSBHubs: hubs ?? legacyHub.map { [$0] } ?? [],
             switchMainDisplay: try container.decodeIfPresent(Bool.self, forKey: .switchMainDisplay) ?? true,
-            launchAtLogin: try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? true
+            launchAtLogin: try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? true,
+            monitorInputs: try? container.decodeIfPresent(LearnedMonitorInputs.self, forKey: .monitorInputs)
         )
     }
 
@@ -162,6 +176,36 @@ struct AppSettings: Codable, Equatable, Sendable {
         try container.encodeIfPresent(selectedUSBHubs.first, forKey: .legacySelectedUSBHub)
         try container.encode(switchMainDisplay, forKey: .switchMainDisplay)
         try container.encode(launchAtLogin, forKey: .launchAtLogin)
+        try container.encodeIfPresent(monitorInputs, forKey: .monitorInputs)
+    }
+}
+
+/// The monitor input numbers learned for each Mac on one display.
+struct LearnedMonitorInputs: Codable, Equatable, Sendable {
+    let displayIdentifier: String
+    var thisMac: Int?
+    var otherMac: Int?
+
+    /// Returns the inputs with a new reading recorded, or nil when the reading conflicts
+    /// with the other Mac's input and must be discarded.
+    static func recording(
+        _ value: Int,
+        forThisMac isThisMac: Bool,
+        displayIdentifier: String,
+        into existing: LearnedMonitorInputs?
+    ) -> LearnedMonitorInputs? {
+        var inputs = LearnedMonitorInputs(displayIdentifier: displayIdentifier)
+        if let existing, existing.displayIdentifier == displayIdentifier {
+            inputs = existing
+        }
+        if isThisMac {
+            guard inputs.otherMac != value else { return nil }
+            inputs.thisMac = value
+        } else {
+            guard inputs.thisMac != value else { return nil }
+            inputs.otherMac = value
+        }
+        return inputs
     }
 }
 

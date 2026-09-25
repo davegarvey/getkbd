@@ -2,7 +2,7 @@ import Foundation
 
 @main
 struct GetKbdChecks {
-    static func main() {
+    static func main() async {
         check(
             normalizedBluetoothIdentifier("AA-BB:CC") == "aabbcc",
             "Bluetooth identifier normalization"
@@ -31,6 +31,8 @@ struct GetKbdChecks {
         checkSettingsMigration()
         checkMenuStatus(settings)
         checkHubIdentification(hub)
+        checkMonitorInputs(settings)
+        await checkMonitorInputLearner()
 
         print("GetKbd checks passed.")
     }
@@ -89,6 +91,69 @@ struct GetKbdChecks {
         var timedOut = HubIdentification(hubs: [hub], at: start)
         timedOut.tick(at: start + HubIdentification.timeout)
         check(timedOut.phase == .timedOut, "identification times out")
+    }
+
+    private static func checkMonitorInputs(_ settings: AppSettings) {
+        let captured: [UInt8] = [0x6E, 0x88, 0x02, 0x00, 0x60, 0x00, 0x00, 0x15, 0x00, 0x13, 0xD2, 0x00]
+        check(DDCInputReply.currentValue(from: captured) == 19, "input reply parses")
+        var unsupported = captured
+        unsupported[3] = 0x01
+        check(DDCInputReply.currentValue(from: unsupported) == nil, "unsupported reply is rejected")
+        check(DDCInputReply.currentValue(from: Array(captured.prefix(6))) == nil, "short reply is rejected")
+
+        let identifier = settings.selectedDisplay?.identifier ?? ""
+        let thisMac = LearnedMonitorInputs.recording(19, forThisMac: true, displayIdentifier: identifier, into: nil)
+        let both = LearnedMonitorInputs.recording(21, forThisMac: false, displayIdentifier: identifier, into: thisMac)
+        check(both?.thisMac == 19 && both?.otherMac == 21, "both monitor inputs are learned")
+        check(
+            LearnedMonitorInputs.recording(19, forThisMac: false, displayIdentifier: identifier, into: both) == nil,
+            "conflicting monitor input is discarded"
+        )
+
+        var withInputs = settings
+        withInputs.monitorInputs = both
+        func monitorAction(hub: Bool, available: Bool = true) -> MonitorAction? {
+            MenuStatus.make(
+                settings: withInputs,
+                snapshot: OwnershipSnapshot(
+                    keyboardState: hub ? .connectedLocal : .disconnected,
+                    ownershipReason: .none,
+                    monitorPresent: true,
+                    usbHubPresent: hub,
+                    isBusy: false,
+                    errorMessage: nil
+                ),
+                desiredState: nil,
+                monitorControlAvailable: available
+            ).monitorAction
+        }
+        check(monitorAction(hub: true) == .switchToOtherMac, "active Mac offers switch to other Mac")
+        check(monitorAction(hub: false) == .switchToThisMac, "inactive Mac offers switch to this Mac")
+        check(monitorAction(hub: false, available: false) == nil, "unavailable monitor control hides the action")
+    }
+
+    @MainActor
+    private static func checkMonitorInputLearner() async {
+        final class Control: MonitorInputControl, @unchecked Sendable {
+            var readings: [Int?]
+            init(_ readings: [Int?]) { self.readings = readings }
+            func readInput(displayIdentifier: String) async -> Int? { readings.isEmpty ? nil : readings.removeFirst() }
+            func setInput(_ value: Int, displayIdentifier: String) async -> Bool { true }
+        }
+
+        let learner = MonitorInputLearner(control: Control([nil, 21, 19, 21, 21]), readingInterval: 0)
+        var recorded: (Int, Bool)?
+        learner.onReading = { value, isThisMac, _ in recorded = (value, isThisMac) }
+        learner.learn(displayIdentifier: "d", hubPresent: false)
+        await learner.waitForIdle()
+        check(recorded?.0 == 21 && recorded?.1 == false, "learner accepts two agreeing readings")
+
+        let silent = MonitorInputLearner(control: Control([]), readingInterval: 0, maximumReadings: 3)
+        var available: Bool?
+        silent.onAvailabilityChange = { available = $0 }
+        silent.learn(displayIdentifier: "d", hubPresent: true)
+        await silent.waitForIdle()
+        check(available == false, "silent monitor is reported unavailable")
     }
 
     private static func check(_ condition: Bool, _ name: String) {

@@ -49,6 +49,53 @@ final class MenuStatusTests: XCTestCase {
         )
     }
 
+    func testMonitorActionOnTheMacTheMonitorIsShowing() {
+        let status = MenuStatus.make(
+            settings: settingsWithInputs(thisMac: 19, otherMac: 21),
+            snapshot: snapshot(keyboard: .connectedLocal, usbHub: true),
+            desiredState: nil,
+            monitorControlAvailable: true
+        )
+
+        XCTAssertEqual(status.action, .release)
+        XCTAssertEqual(status.monitorAction, .switchToOtherMac)
+    }
+
+    func testMonitorActionOnTheOtherMac() {
+        let status = MenuStatus.make(
+            settings: settingsWithInputs(thisMac: 19, otherMac: nil),
+            snapshot: snapshot(keyboard: .disconnected, usbHub: false),
+            desiredState: nil,
+            monitorControlAvailable: true
+        )
+
+        XCTAssertEqual(status, MenuStatus(title: "Monitor is showing your other Mac", action: nil, monitorAction: .switchToThisMac))
+    }
+
+    func testNoMonitorActionWhenUnavailableUnknownOfflineOrBusy() {
+        let settings = settingsWithInputs(thisMac: 19, otherMac: nil)
+        XCTAssertNil(MenuStatus.make(
+            settings: settings, snapshot: snapshot(usbHub: false), desiredState: nil, monitorControlAvailable: false
+        ).monitorAction)
+        XCTAssertNil(MenuStatus.make(
+            settings: settings, snapshot: snapshot(usbHub: true), desiredState: nil, monitorControlAvailable: true
+        ).monitorAction)
+        XCTAssertNil(MenuStatus.make(
+            settings: settings, snapshot: snapshot(monitor: false, usbHub: false), desiredState: nil,
+            monitorControlAvailable: true
+        ).monitorAction)
+        XCTAssertNil(MenuStatus.make(
+            settings: settings, snapshot: snapshot(keyboard: .connecting, usbHub: false), desiredState: nil,
+            monitorControlAvailable: true
+        ).monitorAction)
+    }
+
+    private func settingsWithInputs(thisMac: Int?, otherMac: Int?) -> AppSettings {
+        var settings = configuredSettings
+        settings.monitorInputs = LearnedMonitorInputs(displayIdentifier: "display", thisMac: thisMac, otherMac: otherMac)
+        return settings
+    }
+
     private func make(_ snapshot: OwnershipSnapshot, desired: DesiredKeyboardState? = nil) -> MenuStatus {
         MenuStatus.make(settings: configuredSettings, snapshot: snapshot, desiredState: desired)
     }
