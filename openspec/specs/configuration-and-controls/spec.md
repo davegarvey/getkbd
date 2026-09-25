@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Define getkbd's local configuration, menu-bar controls, settings workflow,
-shortcut behavior, and login startup experience.
+Define getkbd's local configuration, menu-bar status and actions, settings and
+setup workflow, and login startup experience.
 
 ## Requirements
 
