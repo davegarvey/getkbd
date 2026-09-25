@@ -129,3 +129,14 @@ Downloads](https://developer.apple.com/download/all/).
 - Both Macs must be running getkbd for automatic local handoff.
 - The built-in **Launch getkbd at login** option requires a signed build and will not work with
   the default ad-hoc signature.
+
+### Logs
+
+getkbd records USB hub, display, keyboard and sleep events in the macOS unified log. To see what
+happened during a switch, run this on each Mac shortly afterwards:
+
+```sh
+log show --last 10m --predicate 'subsystem == "com.getkbd.app"' --style compact
+```
+
+To watch events as they happen, replace `show --last 10m` with `stream`.
