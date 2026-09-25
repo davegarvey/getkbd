@@ -208,6 +208,61 @@ final class DisplayPrimaryTests: XCTestCase {
         monitor.stop()
     }
 
+    func testDisabledPreferenceLeavesPrimaryDisplayUnchanged() async {
+        let system = FakeDisplayPrimarySystem(
+            snapshots: [
+                display("built-in", builtIn: true, active: true, x: -1440),
+                display("external", builtIn: false, active: true, x: 0)
+            ],
+            mainIdentifier: "external"
+        )
+        let monitor = DisplayMonitor(
+            configuredDisplayIdentifier: "external",
+            debounceInterval: 0,
+            primaryDisplaySystem: system
+        )
+        monitor.primarySyncEnabled = false
+
+        monitor.updatePrimaryHubSignal(configured: true, present: false)
+        monitor.setPrimaryDisplaySleeping(true)
+        monitor.setPrimaryDisplaySleeping(false)
+        for _ in 0..<100 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(system.applyCallCount, 0)
+        XCTAssertEqual(system.mainIdentifier, "external")
+        monitor.stop()
+    }
+
+    func testEnablingPreferenceSynchronizesWithoutHubTransition() async {
+        let system = FakeDisplayPrimarySystem(
+            snapshots: [
+                display("built-in", builtIn: true, active: true, x: -1440),
+                display("external", builtIn: false, active: true, x: 0)
+            ],
+            mainIdentifier: "external"
+        )
+        let monitor = DisplayMonitor(
+            configuredDisplayIdentifier: "external",
+            debounceInterval: 0,
+            primaryDisplaySystem: system
+        )
+        _ = monitor.start()
+        monitor.primarySyncEnabled = false
+        monitor.updatePrimaryHubSignal(configured: true, present: false)
+        XCTAssertEqual(system.applyCallCount, 0)
+
+        monitor.primarySyncEnabled = true
+        for _ in 0..<100 where system.applyCallCount == 0 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(system.applyCallCount, 1)
+        XCTAssertEqual(system.mainIdentifier, "built-in")
+        monitor.stop()
+    }
+
     func testWakeWithHubPresentTargetsExternalDisplay() async {
         let system = FakeDisplayPrimarySystem(
             snapshots: [

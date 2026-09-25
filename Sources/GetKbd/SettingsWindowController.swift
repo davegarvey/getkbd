@@ -24,19 +24,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         )
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 680),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 400),
+            styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         window.title = "getkbd"
         window.center()
-        window.setFrameAutosaveName("getkbd.settings")
-        window.minSize = NSSize(width: 820, height: 580)
+        window.setFrameAutosaveName("getkbd.settings.v2")
         window.isReleasedWhenClosed = false
-        window.contentViewController = NSHostingController(
-            rootView: SettingsView(viewModel: viewModel)
-        )
+        let hostingController = NSHostingController(rootView: SettingsView(viewModel: viewModel))
+        hostingController.sizingOptions = [.preferredContentSize]
+        window.contentViewController = hostingController
 
         super.init(window: window)
         window.delegate = self

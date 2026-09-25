@@ -1,4 +1,3 @@
-import Carbon
 import Foundation
 
 func normalizedBluetoothIdentifier(_ identifier: String) -> String {
@@ -93,140 +92,76 @@ struct USBHubDescriptor: Codable, Equatable, Hashable, Identifiable, Sendable {
     }
 }
 
-struct ShortcutConfiguration: Codable, Equatable, Sendable {
-    var keyCode: UInt32
-    var modifiers: UInt32
-
-    static let `default` = ShortcutConfiguration(
-        keyCode: UInt32(kVK_ANSI_K),
-        modifiers: UInt32(controlKey | optionKey | cmdKey)
-    )
-
-    var displayString: String {
-        var parts: [String] = []
-
-        if modifiers & UInt32(controlKey) != 0 {
-            parts.append("Ctrl")
-        }
-        if modifiers & UInt32(optionKey) != 0 {
-            parts.append("Opt")
-        }
-        if modifiers & UInt32(shiftKey) != 0 {
-            parts.append("Shift")
-        }
-        if modifiers & UInt32(cmdKey) != 0 {
-            parts.append("Cmd")
-        }
-
-        parts.append(Self.keyName(for: keyCode))
-        return parts.joined(separator: "+")
-    }
-
-    var keyEquivalent: String {
-        let name = Self.keyName(for: keyCode)
-        guard name.count == 1 else { return "" }
-        return name.lowercased()
-    }
-
-    static func keyName(for keyCode: UInt32) -> String {
-        switch keyCode {
-        case UInt32(kVK_ANSI_A): return "A"
-        case UInt32(kVK_ANSI_B): return "B"
-        case UInt32(kVK_ANSI_C): return "C"
-        case UInt32(kVK_ANSI_D): return "D"
-        case UInt32(kVK_ANSI_E): return "E"
-        case UInt32(kVK_ANSI_F): return "F"
-        case UInt32(kVK_ANSI_G): return "G"
-        case UInt32(kVK_ANSI_H): return "H"
-        case UInt32(kVK_ANSI_I): return "I"
-        case UInt32(kVK_ANSI_J): return "J"
-        case UInt32(kVK_ANSI_K): return "K"
-        case UInt32(kVK_ANSI_L): return "L"
-        case UInt32(kVK_ANSI_M): return "M"
-        case UInt32(kVK_ANSI_N): return "N"
-        case UInt32(kVK_ANSI_O): return "O"
-        case UInt32(kVK_ANSI_P): return "P"
-        case UInt32(kVK_ANSI_Q): return "Q"
-        case UInt32(kVK_ANSI_R): return "R"
-        case UInt32(kVK_ANSI_S): return "S"
-        case UInt32(kVK_ANSI_T): return "T"
-        case UInt32(kVK_ANSI_U): return "U"
-        case UInt32(kVK_ANSI_V): return "V"
-        case UInt32(kVK_ANSI_W): return "W"
-        case UInt32(kVK_ANSI_X): return "X"
-        case UInt32(kVK_ANSI_Y): return "Y"
-        case UInt32(kVK_ANSI_Z): return "Z"
-        case UInt32(kVK_ANSI_0): return "0"
-        case UInt32(kVK_ANSI_1): return "1"
-        case UInt32(kVK_ANSI_2): return "2"
-        case UInt32(kVK_ANSI_3): return "3"
-        case UInt32(kVK_ANSI_4): return "4"
-        case UInt32(kVK_ANSI_5): return "5"
-        case UInt32(kVK_ANSI_6): return "6"
-        case UInt32(kVK_ANSI_7): return "7"
-        case UInt32(kVK_ANSI_8): return "8"
-        case UInt32(kVK_ANSI_9): return "9"
-        case UInt32(kVK_Return): return "Return"
-        case UInt32(kVK_Space): return "Space"
-        case UInt32(kVK_Tab): return "Tab"
-        case UInt32(kVK_Escape): return "Esc"
-        default: return "Key \(keyCode)"
-        }
-    }
-}
-
 struct AppSettings: Codable, Equatable, Sendable {
     var selectedKeyboard: KeyboardDescriptor?
     var selectedDisplay: DisplayDescriptor?
-    var selectedUSBHub: USBHubDescriptor?
-    var shortcut: ShortcutConfiguration
+    var selectedUSBHubs: [USBHubDescriptor]
+    var switchMainDisplay: Bool
     var launchAtLogin: Bool
 
     init(
         selectedKeyboard: KeyboardDescriptor?,
         selectedDisplay: DisplayDescriptor?,
-        selectedUSBHub: USBHubDescriptor?,
-        shortcut: ShortcutConfiguration,
+        selectedUSBHubs: [USBHubDescriptor],
+        switchMainDisplay: Bool,
         launchAtLogin: Bool
     ) {
         self.selectedKeyboard = selectedKeyboard
         self.selectedDisplay = selectedDisplay
-        self.selectedUSBHub = selectedUSBHub
-        self.shortcut = shortcut
+        self.selectedUSBHubs = selectedUSBHubs
+        self.switchMainDisplay = switchMainDisplay
         self.launchAtLogin = launchAtLogin
     }
 
     static let initial = AppSettings(
         selectedKeyboard: nil,
         selectedDisplay: nil,
-        selectedUSBHub: nil,
-        shortcut: .default,
+        selectedUSBHubs: [],
+        switchMainDisplay: true,
         launchAtLogin: true
     )
 
     var needsOnboarding: Bool {
         selectedKeyboard == nil ||
             selectedDisplay == nil ||
-            selectedUSBHub == nil
+            selectedUSBHubs.isEmpty
+    }
+
+    var selectedUSBHubIdentifiers: Set<String> {
+        Set(selectedUSBHubs.map(\.identifier))
     }
 
     private enum CodingKeys: String, CodingKey {
         case selectedKeyboard
         case selectedDisplay
-        case selectedUSBHub
-        case shortcut
+        case selectedUSBHubs
+        // Written alongside the group so that earlier builds keep a working selection.
+        case legacySelectedUSBHub = "selectedUSBHub"
+        case switchMainDisplay
         case launchAtLogin
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let hubs = try container.decodeIfPresent([USBHubDescriptor].self, forKey: .selectedUSBHubs)
+        let legacyHub = try container.decodeIfPresent(USBHubDescriptor.self, forKey: .legacySelectedUSBHub)
         self.init(
             selectedKeyboard: try container.decodeIfPresent(KeyboardDescriptor.self, forKey: .selectedKeyboard),
             selectedDisplay: try container.decodeIfPresent(DisplayDescriptor.self, forKey: .selectedDisplay),
-            selectedUSBHub: try container.decodeIfPresent(USBHubDescriptor.self, forKey: .selectedUSBHub),
-            shortcut: try container.decodeIfPresent(ShortcutConfiguration.self, forKey: .shortcut) ?? .default,
+            selectedUSBHubs: hubs ?? legacyHub.map { [$0] } ?? [],
+            switchMainDisplay: try container.decodeIfPresent(Bool.self, forKey: .switchMainDisplay) ?? true,
             launchAtLogin: try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? true
         )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(selectedKeyboard, forKey: .selectedKeyboard)
+        try container.encodeIfPresent(selectedDisplay, forKey: .selectedDisplay)
+        try container.encode(selectedUSBHubs, forKey: .selectedUSBHubs)
+        try container.encodeIfPresent(selectedUSBHubs.first, forKey: .legacySelectedUSBHub)
+        try container.encode(switchMainDisplay, forKey: .switchMainDisplay)
+        try container.encode(launchAtLogin, forKey: .launchAtLogin)
     }
 }
 
