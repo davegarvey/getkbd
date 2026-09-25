@@ -35,7 +35,6 @@ final class OwnershipControllerTests: XCTestCase {
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         await controller.waitForIdle()
-        display.events.removeAll()
 
         controller.usbHubDisconnected()
         await controller.waitForIdle()
@@ -76,7 +75,6 @@ final class OwnershipControllerTests: XCTestCase {
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         await controller.waitForIdle()
-        display.events.removeAll()
 
         controller.willSleep()
         await controller.waitForIdle()
