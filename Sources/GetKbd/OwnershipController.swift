@@ -25,7 +25,20 @@ final class OwnershipController {
     private var reconfigurationReleaseAttempted = false
 
     private static let usbHubClaimDelayNanoseconds: UInt64 = 750_000_000
-    private static let automaticRetryDelayNanoseconds: UInt64 = 1_000_000_000
+    // A sleeping keyboard may miss the first few pairing requests. Keep trying while this
+    // Mac has the monitor's USB hub, leaving time for a key press to wake the keyboard.
+    private static let automaticClaimRetryDelaysNanoseconds: [UInt64] = [
+        5_000_000_000,
+        15_000_000_000,
+        30_000_000_000,
+        60_000_000_000,
+        60_000_000_000,
+        60_000_000_000
+    ]
+    private static let automaticReleaseRetryDelaysNanoseconds: [UInt64] = [
+        1_000_000_000,
+        1_000_000_000
+    ]
 
     private var automaticClaimReady: Bool {
         !isSleeping && monitorPresent && usbHubPresent
@@ -353,15 +366,19 @@ final class OwnershipController {
     }
 
     private func scheduleAutomaticRetry(for target: DesiredKeyboardState) {
+        let delays = target == .connected
+            ? Self.automaticClaimRetryDelaysNanoseconds
+            : Self.automaticReleaseRetryDelaysNanoseconds
         guard manualTarget == nil,
-              automaticRetryCount < 2,
+              automaticRetryCount < delays.count,
               automaticRetryTask == nil else {
             return
         }
 
+        let delay = delays[automaticRetryCount]
         automaticRetryCount += 1
         automaticRetryTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.automaticRetryDelayNanoseconds)
+            try? await Task.sleep(nanoseconds: delay)
             guard !Task.isCancelled else { return }
 
             guard let self else { return }

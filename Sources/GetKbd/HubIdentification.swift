@@ -21,6 +21,7 @@ struct HubIdentification {
     private let baseline: [String: USBHubDescriptor]
     private let startedAt: Date
     private var current: [String: USBHubDescriptor]
+    private var observedHubs: [String: USBHubDescriptor]
     private var lastChangeAt: Date
     private var hasUnsettledChange = false
     private var changedSinceBaseline = Set<String>()
@@ -28,6 +29,7 @@ struct HubIdentification {
     init(hubs: [USBHubDescriptor], at date: Date) {
         baseline = Self.keyed(hubs)
         current = baseline
+        observedHubs = baseline
         startedAt = date
         lastChangeAt = date
     }
@@ -43,6 +45,7 @@ struct HubIdentification {
         guard !isFinished else { return }
         let keyed = Self.keyed(hubs)
         guard Set(keyed.keys) != Set(current.keys) else { return }
+        observedHubs.merge(keyed, uniquingKeysWith: { _, latest in latest })
         current = keyed
         lastChangeAt = date
         hasUnsettledChange = true
@@ -69,7 +72,7 @@ struct HubIdentification {
         let returned = changedSinceBaseline.subtracting(differing)
         guard returned.isEmpty else {
             let descriptors = returned
-                .compactMap { current[$0] ?? baseline[$0] }
+                .compactMap { observedHubs[$0] }
                 .sorted { $0.identifier < $1.identifier }
             phase = .succeeded(descriptors)
             return

@@ -137,7 +137,9 @@ Downloads](https://developer.apple.com/download/all/).
   cable is connected to this Mac, then click **Try Again**.
 - If the display is missing after reconnecting, open **Display Settings** and verify the cable and
   selected monitor input before retrying the switch.
-- Wake or power-cycle the keyboard if pairing fails.
+- If pairing fails, press a key to wake the keyboard. getkbd retries for several minutes while
+  the monitor's USB hub remains on this Mac. Use **Try Again** if those attempts finish; power-cycle
+  the keyboard only if it still does not respond.
 - Both Macs must be running getkbd for automatic local handoff.
 - The built-in **Launch getkbd at login** option requires a signed build and will not work with
   the default ad-hoc signature.

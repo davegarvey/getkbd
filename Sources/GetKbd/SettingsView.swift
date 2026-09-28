@@ -68,9 +68,9 @@ final class SettingsViewModel: ObservableObject {
         }
         switch identification?.phase {
         case .waitingForFirstSwitch:
-            return "Waiting for the monitor to switch to your other Mac…"
+            return "Switch the monitor to your other Mac, then back to this Mac…"
         case .waitingForSwitchBack:
-            return "Now switch the monitor back to this Mac…"
+            return "USB connection changed. Switch the monitor once more…"
         case .succeeded, .timedOut, nil:
             return ""
         }
@@ -190,7 +190,7 @@ final class SettingsViewModel: ObservableObject {
         self.identification = identification
 
         switch identification.phase {
-        case .succeeded(let hubs):
+        case .succeeded(let hubs) where !hubs.isEmpty:
             identificationTask = nil
             self.identification = nil
             let wasIncomplete = settingsStore.value.needsOnboarding
@@ -200,6 +200,10 @@ final class SettingsViewModel: ObservableObject {
             if wasIncomplete, !settings.needsOnboarding {
                 completedSetupThisSession = true
             }
+        case .succeeded:
+            identificationTask = nil
+            self.identification = nil
+            identificationFailed = true
         case .timedOut:
             identificationTask = nil
             self.identification = nil
