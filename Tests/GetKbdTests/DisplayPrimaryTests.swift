@@ -473,6 +473,8 @@ private final class DisplayTestKeyboard: KeyboardControlling {
         return true
     }
 
+    func cancelConnect() {}
+
     func disconnect() async -> Bool {
         state = .disconnected
         onStateChange?(state)

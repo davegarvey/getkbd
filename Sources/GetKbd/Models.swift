@@ -216,6 +216,8 @@ struct OwnershipSnapshot: Equatable, Sendable {
     let usbHubPresent: Bool
     let isBusy: Bool
     let errorMessage: String?
+    /// An automatic claim has failed and getkbd is waiting to retry it or retrying it.
+    let isRetryingClaim: Bool
 
     init(
         keyboardState: KeyboardConnectionState,
@@ -223,7 +225,8 @@ struct OwnershipSnapshot: Equatable, Sendable {
         monitorPresent: Bool,
         usbHubPresent: Bool,
         isBusy: Bool,
-        errorMessage: String?
+        errorMessage: String?,
+        isRetryingClaim: Bool = false
     ) {
         self.keyboardState = keyboardState
         self.ownershipReason = ownershipReason
@@ -231,5 +234,6 @@ struct OwnershipSnapshot: Equatable, Sendable {
         self.usbHubPresent = usbHubPresent
         self.isBusy = isBusy
         self.errorMessage = errorMessage
+        self.isRetryingClaim = isRetryingClaim
     }
 }

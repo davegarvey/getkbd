@@ -36,7 +36,7 @@ final class MenuBarController: NSObject {
 
     func refresh() {
         let status = currentStatus
-        statusItem.button?.image = Self.statusImage(for: ownership.snapshot.keyboardState, title: status.title)
+        statusItem.button?.image = Self.statusImage(for: ownership.snapshot, title: status.title)
         statusItem.button?.image?.isTemplate = true
         statusItem.button?.toolTip = status.title
         statusItem.menu = makeMenu(for: status)
@@ -104,6 +104,9 @@ final class MenuBarController: NSObject {
         case .retry:
             title = "Try Again"
             selector = #selector(retryKeyboard)
+        case .tryNow:
+            title = "Try Now"
+            selector = #selector(tryKeyboardNow)
         case .finishSetup:
             title = "Finish Setup…"
             selector = #selector(openSettings)
@@ -131,15 +134,22 @@ final class MenuBarController: NSObject {
         return item
     }
 
-    private static func statusImage(for state: KeyboardConnectionState, title: String) -> NSImage? {
+    private static func statusImage(for snapshot: OwnershipSnapshot, title: String) -> NSImage? {
         let symbolName: String
-        switch state {
-        case .failed:
-            symbolName = "exclamationmark.triangle"
-        case .disconnected, .unknown:
-            symbolName = "keyboard"
-        case .connecting, .disconnecting, .connectedLocal:
-            symbolName = "keyboard.fill"
+        if snapshot.isBusy || snapshot.isRetryingClaim {
+            // Distinct from the filled icon so that an attempt is not mistaken for a connection.
+            symbolName = "keyboard.badge.ellipsis"
+        } else {
+            switch snapshot.keyboardState {
+            case .failed:
+                symbolName = "exclamationmark.triangle"
+            case .disconnected, .unknown:
+                symbolName = "keyboard"
+            case .connecting, .disconnecting:
+                symbolName = "keyboard.badge.ellipsis"
+            case .connectedLocal:
+                symbolName = "keyboard.fill"
+            }
         }
 
         return NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
@@ -159,6 +169,10 @@ final class MenuBarController: NSObject {
         } else {
             ownership.manualClaim()
         }
+    }
+
+    @objc private func tryKeyboardNow() {
+        ownership.connectNow()
     }
 
     @objc private func switchMonitorToOtherMac() {

@@ -13,6 +13,8 @@ protocol KeyboardControlling: AnyObject {
     func stop()
     func refreshState()
     func connect() async -> Bool
+    /// Stops a claim that is still waiting for the keyboard to pair; `connect()` then returns false.
+    func cancelConnect()
     func disconnect() async -> Bool
 }
 
@@ -32,6 +34,23 @@ private final class ContinuationGate<Value: Sendable>: @unchecked Sendable {
         guard !hasResumed else { return }
         hasResumed = true
         continuation.resume(returning: value)
+    }
+}
+
+private final class CancellationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
     }
 }
 
@@ -57,6 +76,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         attributes: .concurrent
     )
     private var stateValue: KeyboardConnectionState = .unknown
+    private var connectCancellation: CancellationFlag?
     private var observers: [NSObjectProtocol] = []
 
     var configuredKeyboard: KeyboardDescriptor? {
@@ -114,6 +134,14 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         updateState(.connecting)
         GetKbdLog.event("keyboard.claim.started", configuredKeyboard?.name ?? "")
 
+        let cancellation = CancellationFlag()
+        connectCancellation = cancellation
+        defer {
+            if connectCancellation === cancellation {
+                connectCancellation = nil
+            }
+        }
+
         let removeResult = await runBluetoothCall { Self.removePairing(box.device) }
 
         guard let removeResult else {
@@ -134,8 +162,16 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         // reliably accept a new pairing attempt.
         try? await Task.sleep(nanoseconds: Self.handoffSettleDelayNanoseconds)
 
+        guard !cancellation.isCancelled else {
+            return cancelClaim()
+        }
+
         GetKbdLog.event("keyboard.pair.started", configuredKeyboard?.name ?? "")
-        let pairResult = await runBluetoothCall { Self.pairDevice(box.device) }
+        let pairResult = await runBluetoothCall { Self.pairDevice(box.device, cancellation: cancellation) }
+
+        if pairResult == kIOReturnAborted, cancellation.isCancelled {
+            return cancelClaim()
+        }
 
         guard let pairResult else {
             fail("Bluetooth pairing timed out")
@@ -176,6 +212,19 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         updateState(.connectedLocal)
         GetKbdLog.event("keyboard.claim.success")
         return true
+    }
+
+    // Once pairing has succeeded the claim is left to finish, so cancellation only applies
+    // before then.
+    func cancelConnect() {
+        connectCancellation?.cancel()
+    }
+
+    private func cancelClaim() -> Bool {
+        lastError = nil
+        GetKbdLog.event("keyboard.claim.cancelled")
+        refreshState()
+        return false
     }
 
     func disconnect() async -> Bool {
@@ -321,7 +370,10 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         return kIOReturnSuccess
     }
 
-    nonisolated private static func pairDevice(_ device: IOBluetoothDevice) -> IOReturn {
+    nonisolated private static func pairDevice(
+        _ device: IOBluetoothDevice,
+        cancellation: CancellationFlag
+    ) -> IOReturn {
         guard let pairer = IOBluetoothDevicePair(device: device) else {
             return kIOReturnError
         }
@@ -336,7 +388,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         }
 
         let deadline = Date().addingTimeInterval(Self.pairingTimeout)
-        while !delegate.finished && Date() < deadline {
+        while !delegate.finished && !cancellation.isCancelled && Date() < deadline {
             _ = RunLoop.current.run(
                 mode: .default,
                 before: min(deadline, Date().addingTimeInterval(0.1))
@@ -346,7 +398,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         guard delegate.finished else {
             pairer.delegate = nil
             pairer.stop()
-            return kIOReturnError
+            return cancellation.isCancelled ? kIOReturnAborted : kIOReturnError
         }
 
         pairer.delegate = nil
