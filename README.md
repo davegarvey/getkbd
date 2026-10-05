@@ -95,6 +95,9 @@ The menu shows where the keyboard is and, when one applies, a single keyboard ac
 - **Release Keyboard**: shown when this Mac has the keyboard.
 - **Get Keyboard**: shown when the monitor is showing this Mac but the keyboard is not connected,
   or when the monitor is not connected.
+- **Try Now**: shown while getkbd is connecting the keyboard or waiting to retry. It stops any
+  pairing attempt in progress and starts a new one immediately. While retrying, the menu reads
+  "Keyboard isn’t responding".
 - **Try Again**: shown after a claim or release fails.
 
 It can also show one monitor action:
@@ -138,8 +141,9 @@ Downloads](https://developer.apple.com/download/all/).
 - If the display is missing after reconnecting, open **Display Settings** and verify the cable and
   selected monitor input before retrying the switch.
 - If pairing fails, press a key to wake the keyboard. getkbd retries for several minutes while
-  the monitor's USB hub remains on this Mac. Use **Try Again** if those attempts finish; power-cycle
-  the keyboard only if it still does not respond.
+  the monitor's USB hub remains on this Mac. A keyboard left unpaired for hours may not respond
+  until it is switched off and on; do that, then choose **Try Now** (or **Get Keyboard** once the
+  retries have finished) within a minute or so, while the keyboard is still discoverable.
 - Both Macs must be running getkbd for automatic local handoff.
 - The built-in **Launch getkbd at login** option requires a signed build and will not work with
   the default ad-hoc signature.

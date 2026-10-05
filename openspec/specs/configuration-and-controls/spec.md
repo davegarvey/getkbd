@@ -186,6 +186,14 @@ one monitor action, Settings, and Quit. The menu SHALL not show separate display
 lines, raw error text, or a keyboard shortcut. The menu-bar icon SHALL continue
 to reflect the keyboard state.
 
+#### Scenario: Menu-bar icon while getkbd is working
+
+- **WHEN** a claim or release is in progress, or an automatic claim is being
+  retried
+- **THEN** the menu-bar icon SHALL show a keyboard with an ellipsis badge, distinct
+  from the filled keyboard shown when connected and the outline keyboard shown
+  when not connected
+
 #### Scenario: Setup is not finished
 
 - **WHEN** the keyboard, display, or hub group is not selected
@@ -208,7 +216,7 @@ to reflect the keyboard state.
 #### Scenario: Monitor is showing this Mac but the keyboard is not connected
 
 - **WHEN** setup is complete, a hub in the group is present, the keyboard is not
-  connected, and no operation is in progress or failed
+  connected, and no operation is in progress, failed, or awaiting retry
 - **THEN** the menu SHALL state that the keyboard is not connected and SHALL offer
   Get Keyboard
 
@@ -221,13 +229,23 @@ to reflect the keyboard state.
 
 #### Scenario: Operation is in progress
 
-- **WHEN** a claim or release is in progress
-- **THEN** the menu SHALL state that the keyboard is connecting or releasing and
-  SHALL offer no keyboard action
+- **WHEN** a release is in progress, or a claim is in progress and no earlier
+  automatic claim in the current retry sequence has failed
+- **THEN** the menu SHALL state that the keyboard is connecting or releasing,
+  SHALL offer Try Now while connecting, and SHALL offer no keyboard action while
+  releasing
+
+#### Scenario: Automatic claim is being retried
+
+- **WHEN** an automatic claim has failed and getkbd is either waiting to retry it
+  or retrying it
+- **THEN** the menu SHALL state that the keyboard is not responding and SHALL
+  offer Try Now
 
 #### Scenario: Operation failed
 
-- **WHEN** the most recent claim or release failed
+- **WHEN** the most recent claim or release failed and no automatic retry is
+  pending
 - **THEN** the menu SHALL state that getkbd could not connect or release the
   keyboard and SHALL offer Try Again, which repeats the failed operation
 
@@ -235,6 +253,11 @@ to reflect the keyboard state.
 
 - **WHEN** the user chooses Get Keyboard or Release Keyboard
 - **THEN** getkbd SHALL request the corresponding manual ownership action
+
+#### Scenario: User chooses Try Now
+
+- **WHEN** the user chooses Try Now
+- **THEN** getkbd SHALL restart the claim immediately
 
 #### Scenario: Monitor can be switched to the other Mac
 
