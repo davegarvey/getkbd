@@ -33,6 +33,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsStore: settingsStore,
             showSettings: { [weak self] in self?.showSettings() },
             switchMonitor: { [weak self] action in self?.switchMonitor(action) },
+            enableBluetooth: { [weak self] in
+                let succeeded = await BluetoothPowerController().enable()
+                self?.keyboardController.refreshState()
+                if succeeded {
+                    GetKbdLog.event("bluetooth.enable.success")
+                } else {
+                    GetKbdLog.error("bluetooth.enable.failed", "Bluetooth could not be enabled; use System Settings")
+                }
+                return succeeded
+            },
             quit: { NSApp.terminate(nil) }
         )
 

@@ -8,6 +8,8 @@ final class MenuBarController: NSObject {
     private let settingsStore: SettingsStore
     private let showSettings: () -> Void
     private let switchMonitor: (MonitorAction) -> Void
+    private let enableBluetooth: () async -> Bool
+    private var bluetoothActivation: BluetoothActivationState = .idle
     private let quit: () -> Void
 
     var monitorControlAvailable = false {
@@ -22,12 +24,14 @@ final class MenuBarController: NSObject {
         settingsStore: SettingsStore,
         showSettings: @escaping () -> Void,
         switchMonitor: @escaping (MonitorAction) -> Void,
+        enableBluetooth: @escaping () async -> Bool,
         quit: @escaping () -> Void
     ) {
         self.ownership = ownership
         self.settingsStore = settingsStore
         self.showSettings = showSettings
         self.switchMonitor = switchMonitor
+        self.enableBluetooth = enableBluetooth
         self.quit = quit
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -35,8 +39,9 @@ final class MenuBarController: NSObject {
     }
 
     func refresh() {
+        if ownership.snapshot.bluetoothAvailability == .poweredOn { bluetoothActivation = .idle }
         let status = currentStatus
-        statusItem.button?.image = Self.statusImage(for: ownership.snapshot.keyboardState, title: status.title)
+        statusItem.button?.image = Self.statusImage(for: ownership.snapshot.keyboardState, bluetooth: ownership.snapshot.bluetoothAvailability, title: status.title)
         statusItem.button?.image?.isTemplate = true
         statusItem.button?.toolTip = status.title
         statusItem.menu = makeMenu(for: status)
@@ -47,7 +52,8 @@ final class MenuBarController: NSObject {
             settings: settingsStore.value,
             snapshot: ownership.snapshot,
             desiredState: ownership.desiredState,
-            monitorControlAvailable: monitorControlAvailable
+            monitorControlAvailable: monitorControlAvailable,
+            bluetoothActivation: bluetoothActivation
         )
     }
 
@@ -104,6 +110,12 @@ final class MenuBarController: NSObject {
         case .retry:
             title = "Try Again"
             selector = #selector(retryKeyboard)
+        case .enableBluetooth:
+            title = "Turn Bluetooth On"
+            selector = #selector(turnBluetoothOn)
+        case .bluetoothSettings:
+            title = "Open Bluetooth Settings…"
+            selector = #selector(openBluetoothSettings)
         case .finishSetup:
             title = "Finish Setup…"
             selector = #selector(openSettings)
@@ -131,18 +143,57 @@ final class MenuBarController: NSObject {
         return item
     }
 
-    private static func statusImage(for state: KeyboardConnectionState, title: String) -> NSImage? {
+    static func statusImage(for state: KeyboardConnectionState, bluetooth: BluetoothAvailability, title: String) -> NSImage? {
         let symbolName: String
         switch state {
         case .failed:
-            symbolName = "exclamationmark.triangle"
+            symbolName = "keyboard"
         case .disconnected, .unknown:
             symbolName = "keyboard"
         case .connecting, .disconnecting, .connectedLocal:
             symbolName = "keyboard.fill"
         }
 
-        return NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+        guard let keyboardImage = NSImage(systemSymbolName: symbolName, accessibilityDescription: title) else {
+            return nil
+        }
+        guard bluetooth != .poweredOn || state == .failed else { return keyboardImage }
+        return warningImage(keyboard: keyboardImage, title: title)
+    }
+
+    /// macOS has no keyboard warning symbol. Draw a small badge with transparent
+    /// clearance so the keyboard remains recognizable in either menu-bar theme.
+    private static func warningImage(keyboard: NSImage, title: String) -> NSImage {
+        let warning = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+        let image = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
+            keyboard.draw(in: NSRect(x: 0, y: 2, width: 18, height: 14))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: NSRect(x: 12, y: -1, width: 11, height: 11)).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            warning?.draw(in: NSRect(x: 13, y: 0, width: 9, height: 9))
+            return true
+        }
+        image.accessibilityDescription = title
+        image.isTemplate = true
+        return image
+    }
+
+    @objc private func turnBluetoothOn() {
+        guard bluetoothActivation != .enabling else { return }
+        bluetoothActivation = .enabling
+        refresh()
+        Task { [weak self] in
+            guard let self else { return }
+            let succeeded = await self.enableBluetooth()
+            self.bluetoothActivation = succeeded ? .idle : .failed
+            self.refresh()
+        }
+    }
+
+    @objc private func openBluetoothSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func getKeyboard() {

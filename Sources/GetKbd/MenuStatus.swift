@@ -9,7 +9,15 @@ enum MenuAction: Equatable {
     case release
     case get
     case retry
+    case enableBluetooth
+    case bluetoothSettings
     case finishSetup
+}
+
+enum BluetoothActivationState {
+    case idle
+    case enabling
+    case failed
 }
 
 /// The menu's single state line, the keyboard action that fits it, and an optional
@@ -29,9 +37,10 @@ struct MenuStatus: Equatable {
         settings: AppSettings,
         snapshot: OwnershipSnapshot,
         desiredState: DesiredKeyboardState?,
-        monitorControlAvailable: Bool = false
+        monitorControlAvailable: Bool = false,
+        bluetoothActivation: BluetoothActivationState = .idle
     ) -> MenuStatus {
-        var status = keyboardStatus(settings: settings, snapshot: snapshot, desiredState: desiredState)
+        var status = keyboardStatus(settings: settings, snapshot: snapshot, desiredState: desiredState, bluetoothActivation: bluetoothActivation)
         status.monitorAction = monitorAction(
             settings: settings,
             snapshot: snapshot,
@@ -64,8 +73,21 @@ struct MenuStatus: Equatable {
     private static func keyboardStatus(
         settings: AppSettings,
         snapshot: OwnershipSnapshot,
-        desiredState: DesiredKeyboardState?
+        desiredState: DesiredKeyboardState?,
+        bluetoothActivation: BluetoothActivationState
     ) -> MenuStatus {
+        if snapshot.bluetoothAvailability != .poweredOn {
+            switch bluetoothActivation {
+            case .enabling:
+                return MenuStatus(title: "Turning Bluetooth on…", action: nil)
+            case .failed:
+                return MenuStatus(title: "Couldn’t turn Bluetooth on", action: .bluetoothSettings)
+            case .idle:
+                return MenuStatus(title: snapshot.bluetoothAvailability.title,
+                                  action: snapshot.bluetoothAvailability == .poweredOff ? .enableBluetooth : .bluetoothSettings)
+            }
+        }
+
         if settings.needsOnboarding {
             return MenuStatus(title: "Setup isn’t finished", action: .finishSetup)
         }

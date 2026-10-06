@@ -3,6 +3,58 @@ import XCTest
 
 @MainActor
 final class OwnershipControllerTests: XCTestCase {
+    func testBluetoothOffBlocksAutomaticAndManualActionsThenRecovers() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.bluetoothAvailability = .poweredOff
+        let controller = OwnershipController(keyboard: keyboard)
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        controller.manualClaim()
+        controller.manualRelease()
+        await controller.waitForIdle()
+        XCTAssertEqual(keyboard.connectCallCount, 0)
+        XCTAssertEqual(keyboard.disconnectCallCount, 0)
+        XCTAssertEqual(controller.snapshot.bluetoothAvailability, .poweredOff)
+
+        keyboard.bluetoothAvailability = .poweredOn
+        keyboard.onBluetoothAvailabilityChange?()
+        await controller.waitForIdle()
+        XCTAssertEqual(keyboard.connectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+    }
+
+    func testBluetoothOffCancelsPendingClaimAndRecoveryRespectsHub() async {
+        let keyboard = FakeKeyboardController()
+        let controller = OwnershipController(keyboard: keyboard)
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        keyboard.bluetoothAvailability = .poweredOff
+        keyboard.onBluetoothAvailabilityChange?()
+        await controller.waitForIdle()
+        XCTAssertEqual(keyboard.connectCallCount, 0)
+        controller.usbHubDisconnected()
+        keyboard.bluetoothAvailability = .poweredOn
+        keyboard.onBluetoothAvailabilityChange?()
+        await controller.waitForIdle()
+        XCTAssertEqual(keyboard.connectCallCount, 0)
+    }
+
+    func testPowerLossDuringClaimDoesNotRetryUntilRestored() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.blockNextConnect = true
+        let controller = OwnershipController(keyboard: keyboard)
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await keyboard.waitUntilConnectIsBlocked()
+        keyboard.bluetoothAvailability = .poweredOff
+        keyboard.onBluetoothAvailabilityChange?()
+        keyboard.completeBlockedConnect(success: false)
+        await controller.waitForIdle()
+        XCTAssertEqual(keyboard.connectCallCount, 1)
+        XCTAssertEqual(controller.snapshot.bluetoothAvailability, .poweredOff)
+        keyboard.bluetoothAvailability = .poweredOn
+        keyboard.onBluetoothAvailabilityChange?()
+        await controller.waitForIdle()
+        XCTAssertEqual(keyboard.connectCallCount, 2)
+    }
+
     func testInactiveStartupDoesNotClaimKeyboard() async {
         let keyboard = FakeKeyboardController()
         let controller = OwnershipController(keyboard: keyboard)
@@ -107,6 +159,8 @@ private final class FakeKeyboardController: KeyboardControlling {
         identifier: "keyboard",
         name: "Shared Keyboard"
     )
+    var bluetoothAvailability: BluetoothAvailability = .poweredOn
+    var onBluetoothAvailabilityChange: (() -> Void)?
     var currentState: KeyboardConnectionState = .disconnected
     var lastError: String?
     var onStateChange: ((KeyboardConnectionState) -> Void)?

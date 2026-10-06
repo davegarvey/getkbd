@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 @main
 struct GetKbdChecks {
@@ -28,6 +29,8 @@ struct GetKbdChecks {
         settings.selectedUSBHubs = [hub]
         check(!settings.needsOnboarding, "complete local settings are ready")
 
+        await checkBluetoothPowerActivation()
+        await checkBluetoothAvailability(settings)
         checkSettingsMigration()
         checkMenuStatus(settings)
         checkHubIdentification(hub)
@@ -35,6 +38,113 @@ struct GetKbdChecks {
         await checkMonitorInputLearner()
 
         print("GetKbd checks passed.")
+    }
+
+    @MainActor
+    private static func checkBluetoothPowerActivation() async {
+        let icon = MenuBarController.statusImage(for: .disconnected, bluetooth: .poweredOff, title: "Bluetooth is off")
+        check(icon?.isTemplate == true && icon?.size == NSSize(width: 22, height: 18),
+              "Bluetooth warning keeps keyboard with a template badge")
+        let preview = NSImage(size: NSSize(width: 220, height: 180), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            icon?.draw(in: rect)
+            return true
+        }
+        if let output = ProcessInfo.processInfo.environment["GETKBD_ICON_PREVIEW"],
+           let tiff = preview.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiff),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            try! png.write(to: URL(fileURLWithPath: output))
+        }
+        var availability = BluetoothAvailability.poweredOff
+        var requests = 0
+        let activation = BluetoothPowerController(requestPowerOn: {
+            requests += 1
+            availability = .poweredOn
+            return true
+        }, availability: { availability })
+        let enabled = await activation.enable()
+        check(enabled && requests == 1, "Direct activation verifies power on")
+        let alreadyEnabled = await activation.enable()
+        check(alreadyEnabled && requests == 1, "Already enabled Bluetooth needs no power request")
+
+        let missingAPI = BluetoothPowerController(requestPowerOn: { false }, availability: { .poweredOff })
+        let missingResult = await missingAPI.enable()
+        check(!missingResult, "Missing private power API fails safely")
+        let ignoredRequest = BluetoothPowerController(timeout: .zero, requestPowerOn: { true }, availability: { .poweredOff })
+        let ignoredResult = await ignoredRequest.enable()
+        check(!ignoredResult, "Unconfirmed activation times out instead of reporting success")
+        var reads = 0
+        let delayed = BluetoothPowerController(requestPowerOn: { true }, availability: {
+            reads += 1
+            return reads >= 3 ? .poweredOn : .poweredOff
+        })
+        let delayedResult = await delayed.enable()
+        check(delayedResult, "Asynchronous controller activation is observed")
+
+        let off = OwnershipSnapshot(keyboardState: .disconnected, ownershipReason: .none,
+                                    monitorPresent: false, usbHubPresent: false, isBusy: false,
+                                    errorMessage: nil, bluetoothAvailability: .poweredOff)
+        let pending = MenuStatus.make(settings: .initial, snapshot: off, desiredState: nil,
+                                      bluetoothActivation: .enabling)
+        check(pending.title == "Turning Bluetooth on…" && pending.action == nil,
+              "Pending activation suppresses repeated menu actions")
+        let failed = MenuStatus.make(settings: .initial, snapshot: off, desiredState: nil,
+                                     bluetoothActivation: .failed)
+        check(failed.title == "Couldn’t turn Bluetooth on" && failed.action == .bluetoothSettings,
+              "Failed activation offers Bluetooth Settings")
+    }
+
+    @MainActor
+    private static func checkBluetoothAvailability(_ settings: AppSettings) async {
+        for availability in [BluetoothAvailability.poweredOff, .unavailable] {
+            let snapshot = OwnershipSnapshot(keyboardState: .failed, ownershipReason: .none,
+                                             monitorPresent: true, usbHubPresent: true,
+                                             isBusy: false, errorMessage: "Pairing failed",
+                                             bluetoothAvailability: availability)
+            var withInputs = settings
+            withInputs.monitorInputs = LearnedMonitorInputs(displayIdentifier: "display-1", thisMac: 19, otherMac: 21)
+            let status = MenuStatus.make(settings: withInputs, snapshot: snapshot, desiredState: .connected,
+                                         monitorControlAvailable: true)
+            check(status.title == availability.title && status.action == (availability == .poweredOff ? .enableBluetooth : .bluetoothSettings),
+                  "Bluetooth availability overrides retry")
+            check(status.monitorAction == .switchToOtherMac, "Bluetooth off preserves monitor switching")
+        }
+        let keyboard = CheckKeyboardController()
+        keyboard.bluetoothAvailability = .poweredOff
+        let ownership = OwnershipController(keyboard: keyboard)
+        ownership.start(monitorPresent: true, usbHubPresent: true)
+        ownership.manualClaim()
+        ownership.manualRelease()
+        await ownership.waitForIdle()
+        check(keyboard.claims == 0 && keyboard.releases == 0, "Bluetooth off blocks keyboard operations")
+        keyboard.setAvailability(.poweredOn)
+        await ownership.waitForIdle()
+        check(keyboard.claims == 1, "Bluetooth restoration resumes automatic claim")
+
+        ownership.usbHubDisconnected()
+        await ownership.waitForIdle()
+        ownership.usbHubConnected()
+        keyboard.setAvailability(.poweredOff)
+        await ownership.waitForIdle()
+        check(keyboard.claims == 1, "Bluetooth off cancels pending claim")
+        ownership.usbHubDisconnected()
+        keyboard.setAvailability(.poweredOn)
+        await ownership.waitForIdle()
+        check(keyboard.claims == 1, "Bluetooth restoration respects current hub signal")
+
+        keyboard.blockNextClaim = true
+        ownership.usbHubConnected()
+        while keyboard.blockedClaim == nil { await Task.yield() }
+        keyboard.setAvailability(.poweredOff)
+        keyboard.blockedClaim?.resume(returning: false)
+        keyboard.blockedClaim = nil
+        await ownership.waitForIdle()
+        check(keyboard.claims == 2, "Power loss during claim suppresses retries")
+        keyboard.setAvailability(.poweredOn)
+        await ownership.waitForIdle()
+        check(keyboard.claims == 3, "Claim interrupted by power loss recovers")
     }
 
     private static func checkSettingsMigration() {
@@ -158,5 +268,47 @@ struct GetKbdChecks {
 
     private static func check(_ condition: Bool, _ name: String) {
         precondition(condition, "Check failed: \(name)")
+    }
+}
+
+@MainActor
+private final class CheckKeyboardController: KeyboardControlling {
+    var configuredKeyboard: KeyboardDescriptor? = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
+    var state: KeyboardConnectionState = .disconnected
+    var bluetoothAvailability: BluetoothAvailability = .poweredOn
+    var lastError: String?
+    var onStateChange: ((KeyboardConnectionState) -> Void)?
+    var onBluetoothAvailabilityChange: (() -> Void)?
+    var claims = 0
+    var releases = 0
+    var blockNextClaim = false
+    var blockedClaim: CheckedContinuation<Bool, Never>?
+
+    func setAvailability(_ availability: BluetoothAvailability) {
+        bluetoothAvailability = availability
+        if availability != .poweredOn { state = .disconnected }
+        onBluetoothAvailabilityChange?()
+    }
+    func availableKeyboards() async -> [KeyboardDescriptor] { [] }
+    func stop() {}
+    func refreshState() { onStateChange?(state) }
+    func connect() async -> Bool {
+        claims += 1
+        state = .connecting
+        onStateChange?(state)
+        var success = true
+        if blockNextClaim {
+            blockNextClaim = false
+            success = await withCheckedContinuation { blockedClaim = $0 }
+        }
+        state = success ? .connectedLocal : .failed
+        onStateChange?(state)
+        return success
+    }
+    func disconnect() async -> Bool {
+        releases += 1
+        state = .disconnected
+        onStateChange?(state)
+        return true
     }
 }

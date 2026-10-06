@@ -6,6 +6,16 @@ func normalizedBluetoothIdentifier(_ identifier: String) -> String {
         .lowercased()
 }
 
+enum BluetoothAvailability: Equatable, Sendable {
+    case poweredOn
+    case poweredOff
+    case unavailable
+
+    var title: String {
+        self == .poweredOff ? "Bluetooth is off" : "Bluetooth is unavailable"
+    }
+}
+
 enum KeyboardConnectionState: String, Codable, Equatable, Sendable {
     case disconnected
     case connecting
@@ -211,6 +221,7 @@ struct LearnedMonitorInputs: Codable, Equatable, Sendable {
 
 struct OwnershipSnapshot: Equatable, Sendable {
     let keyboardState: KeyboardConnectionState
+    let bluetoothAvailability: BluetoothAvailability
     let ownershipReason: OwnershipReason
     let monitorPresent: Bool
     let usbHubPresent: Bool
@@ -223,8 +234,10 @@ struct OwnershipSnapshot: Equatable, Sendable {
         monitorPresent: Bool,
         usbHubPresent: Bool,
         isBusy: Bool,
-        errorMessage: String?
+        errorMessage: String?,
+        bluetoothAvailability: BluetoothAvailability = .poweredOn
     ) {
+        self.bluetoothAvailability = bluetoothAvailability
         self.keyboardState = keyboardState
         self.ownershipReason = ownershipReason
         self.monitorPresent = monitorPresent
