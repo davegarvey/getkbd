@@ -396,6 +396,55 @@ final class DisplayPrimaryTests: XCTestCase {
         XCTAssertEqual(keyboard.state, .connectedLocal)
     }
 
+    func testScreenWakeForcesSyncWithUnchangedTopologyAndHubSignal() async {
+        for hubPresent in [false, true] {
+            let system = FakeDisplayPrimarySystem(
+                snapshots: [
+                    display("built-in", builtIn: true, active: true, x: -1440),
+                    display("external", builtIn: false, active: true, x: 0)
+                ],
+                mainIdentifier: hubPresent ? "built-in" : "external"
+            )
+            let monitor = DisplayMonitor(configuredDisplayIdentifier: "external", debounceInterval: 0,
+                                         primaryDisplaySystem: system)
+            monitor.setPrimaryScreensSleeping(true)
+            _ = monitor.start()
+            monitor.updatePrimaryHubSignal(configured: true, present: hubPresent)
+            monitor.scheduleEvaluation()
+            for _ in 0..<100 { await Task.yield() }
+            XCTAssertEqual(system.applyCallCount, 0)
+            monitor.setPrimaryScreensSleeping(false)
+            for _ in 0..<100 { await Task.yield() }
+            XCTAssertEqual(system.mainIdentifier, hubPresent ? "external" : "built-in")
+            XCTAssertEqual(system.applyCallCount, 1)
+            monitor.stop()
+        }
+    }
+
+    func testScreenWakeRetainsDisabledClamshellAndSystemSleepGuards() async {
+        for condition in ["disabled", "clamshell", "system-sleep"] {
+            let system = FakeDisplayPrimarySystem(
+                snapshots: [
+                    display("built-in", builtIn: true, active: condition != "clamshell",
+                            x: condition == "clamshell" ? nil : -1440),
+                    display("external", builtIn: false, active: true, x: 0)
+                ],
+                mainIdentifier: "external"
+            )
+            let monitor = DisplayMonitor(configuredDisplayIdentifier: "external", debounceInterval: 0,
+                                         primaryDisplaySystem: system)
+            monitor.primarySyncEnabled = condition != "disabled"
+            monitor.setPrimaryDisplaySleeping(condition == "system-sleep")
+            monitor.setPrimaryScreensSleeping(true)
+            monitor.updatePrimaryHubSignal(configured: true, present: false)
+            monitor.setPrimaryScreensSleeping(false)
+            for _ in 0..<100 { await Task.yield() }
+            XCTAssertEqual(system.applyCallCount, 0, condition)
+            XCTAssertEqual(system.mainIdentifier, "external", condition)
+            monitor.stop()
+        }
+    }
+
     private func display(
         _ identifier: String,
         builtIn: Bool,
@@ -449,6 +498,8 @@ private final class FakeDisplayPrimarySystem: DisplayPrimarySystem {
 
 @MainActor
 private final class DisplayTestKeyboard: KeyboardControlling {
+    var bluetoothAvailability: BluetoothAvailability = .poweredOn
+    var onBluetoothAvailabilityChange: (() -> Void)?
     var configuredKeyboard: KeyboardDescriptor? = KeyboardDescriptor(
         identifier: "keyboard",
         name: "Shared Keyboard"

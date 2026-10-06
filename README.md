@@ -77,6 +77,10 @@ getkbd follows the monitor input while keeping both displays extended:
 - When the monitor is showing the other Mac while the laptop is in clamshell mode, getkbd leaves
   the active external display as macOS has configured it.
 
+When the laptop screens wake, including after display-only sleep, getkbd refreshes
+the USB hub state and restores the appropriate main display after the screens settle.
+Screen-only sleep and wake do not themselves reset keyboard ownership.
+
 When the setting is off, getkbd does not change the main display.
 
 getkbd changes only the primary-display role. It does not change display enablement, mirroring,
