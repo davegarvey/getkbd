@@ -37,8 +37,103 @@ struct GetKbdChecks {
         checkMonitorInputs(settings)
         await checkMonitorInputLearner()
         await checkClaimRetries()
+        await checkScreenWakeRecovery()
+        await checkScreenNotificationRouting()
 
         print("GetKbd checks passed.")
+    }
+
+    @MainActor
+    private static func checkScreenWakeRecovery() async {
+        await checkScreenWakeGuards()
+        for hubPresent in [false, true] {
+            let system = CheckDisplayPrimarySystem(
+                snapshots: [
+                    display("built-in", builtIn: true, active: true, x: -1440),
+                    display("external", builtIn: false, active: true, x: 0)
+                ],
+                mainIdentifier: hubPresent ? "built-in" : "external"
+            )
+            let monitor = DisplayMonitor(configuredDisplayIdentifier: "external", debounceInterval: 0,
+                                         primaryDisplaySystem: system)
+            monitor.setPrimaryScreensSleeping(true)
+            _ = monitor.start()
+            monitor.updatePrimaryHubSignal(configured: true, present: hubPresent)
+            monitor.scheduleEvaluation()
+            for _ in 0..<100 { await Task.yield() }
+            check(system.applyCallCount == 0, "Screen sleep defers primary changes")
+            monitor.setPrimaryScreensSleeping(false)
+            for _ in 0..<100 { await Task.yield() }
+            check(system.mainIdentifier == (hubPresent ? "external" : "built-in"), "Screen wake selects the current hub target")
+            check(system.applyCallCount == 1, "Screen wake forces one sync despite unchanged topology")
+            monitor.stop()
+        }
+    }
+
+    @MainActor
+    private static func checkScreenWakeGuards() async {
+        for condition in ["disabled", "clamshell", "system-sleep"] {
+            let system = CheckDisplayPrimarySystem(
+                snapshots: [
+                    display("built-in", builtIn: true, active: condition != "clamshell",
+                            x: condition == "clamshell" ? nil : -1440),
+                    display("external", builtIn: false, active: true, x: 0)
+                ],
+                mainIdentifier: "external"
+            )
+            let monitor = DisplayMonitor(configuredDisplayIdentifier: "external", debounceInterval: 0,
+                                         primaryDisplaySystem: system)
+            monitor.primarySyncEnabled = condition != "disabled"
+            monitor.setPrimaryDisplaySleeping(condition == "system-sleep")
+            monitor.setPrimaryScreensSleeping(true)
+            monitor.updatePrimaryHubSignal(configured: true, present: false)
+            monitor.setPrimaryScreensSleeping(false)
+            for _ in 0..<100 { await Task.yield() }
+            check(system.applyCallCount == 0, "Screen wake respects \(condition)")
+            check(system.mainIdentifier == "external", "Screen wake retains primary under \(condition)")
+            monitor.stop()
+        }
+    }
+
+    private static func display(
+        _ identifier: String,
+        builtIn: Bool,
+        active: Bool,
+        x: Int32?
+    ) -> DisplayPrimarySnapshot {
+        DisplayPrimarySnapshot(
+            identifier: identifier,
+            isBuiltIn: builtIn,
+            isOnline: true,
+            isActive: active,
+            originX: x,
+            originY: x.map { _ in 0 },
+            isMirrored: false
+        )
+    }
+
+    @MainActor
+    private static func checkScreenNotificationRouting() async {
+        let center = NotificationCenter()
+        let monitor = SleepMonitor(notificationCenter: center)
+        var screenSleeps = 0
+        var screenWakes = 0
+        var systemEvents = 0
+        monitor.onScreensDidSleep = { screenSleeps += 1 }
+        monitor.onScreensDidWake = { screenWakes += 1 }
+        monitor.onWillSleep = { systemEvents += 1 }
+        monitor.onDidWake = { systemEvents += 1 }
+        monitor.start()
+        center.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
+        center.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        for _ in 0..<100 { await Task.yield() }
+        check(screenSleeps == 1, "Screen sleep notification routed")
+        check(screenWakes == 1, "Screen wake notification routed and observers removed on stop")
+        check(systemEvents == 0, "Screen events do not trigger system ownership recovery")
+        monitor.stop()
+        center.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        for _ in 0..<100 { await Task.yield() }
+        check(screenWakes == 1, "Screen wake notification routed and observers removed on stop")
     }
 
     @MainActor
@@ -294,6 +389,8 @@ struct GetKbdChecks {
         final class Keyboard: KeyboardControlling {
             var configuredKeyboard: KeyboardDescriptor? = KeyboardDescriptor(identifier: "k", name: "Keyboard")
             var state: KeyboardConnectionState = .disconnected
+            var bluetoothAvailability: BluetoothAvailability = .poweredOn
+            var onBluetoothAvailabilityChange: (() -> Void)?
             var lastError: String?
             var onStateChange: ((KeyboardConnectionState) -> Void)?
             var connectCount = 0
@@ -423,10 +520,47 @@ private final class CheckKeyboardController: KeyboardControlling {
         onStateChange?(state)
         return success
     }
+    func cancelConnect() {
+        blockedClaim?.resume(returning: false)
+        blockedClaim = nil
+    }
     func disconnect() async -> Bool {
         releases += 1
         state = .disconnected
         onStateChange?(state)
+        return true
+    }
+}
+
+@MainActor
+private final class CheckDisplayPrimarySystem: DisplayPrimarySystem {
+    var snapshotsValue: [DisplayPrimarySnapshot]
+    var mainIdentifier: String?
+    var applyResult: Bool
+    var applyCallCount = 0
+
+    init(
+        snapshots: [DisplayPrimarySnapshot],
+        mainIdentifier: String?,
+        applyResult: Bool = true
+    ) {
+        snapshotsValue = snapshots
+        self.mainIdentifier = mainIdentifier
+        self.applyResult = applyResult
+    }
+
+    func snapshots() -> [DisplayPrimarySnapshot] {
+        snapshotsValue
+    }
+
+    func mainDisplayIdentifier() -> String? {
+        mainIdentifier
+    }
+
+    func apply(origins: [DisplayOrigin]) -> Bool {
+        applyCallCount += 1
+        guard applyResult else { return false }
+        mainIdentifier = origins.first(where: { $0.x == 0 && $0.y == 0 })?.identifier
         return true
     }
 }

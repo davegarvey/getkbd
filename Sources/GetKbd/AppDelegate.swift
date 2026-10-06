@@ -112,6 +112,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.learnMonitorInput()
         }
 
+        sleepMonitor.onScreensDidSleep = { [weak self] in
+            self?.displayMonitor.setPrimaryScreensSleeping(true)
+        }
+        sleepMonitor.onScreensDidWake = { [weak self] in
+            guard let self else { return }
+            // Refresh while display changes are suspended, then reconcile after settling.
+            self.displayMonitor.setPrimaryScreensSleeping(true)
+            self.usbHubMonitor.refresh()
+            self.displayMonitor.updatePrimaryHubSignal(
+                configured: !self.settingsStore.value.selectedUSBHubs.isEmpty,
+                present: self.usbHubMonitor.isPresent
+            )
+            self.displayMonitor.setPrimaryScreensSleeping(false)
+        }
+
         sleepMonitor.start()
         let monitorPresent = displayMonitor.start()
         usbHubMonitor.start()

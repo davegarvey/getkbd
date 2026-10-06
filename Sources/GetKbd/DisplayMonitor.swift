@@ -118,6 +118,7 @@ final class DisplayMonitor: DisplayMonitoring {
     private var primaryHubConfigured = false
     private var primaryHubPresent = false
     private var primaryIsSleeping = false
+    private var primaryScreensAreSleeping = false
     private var lastActiveDisplayIdentifiers = Set<String>()
     private var lastMainDisplayIdentifier: String?
     private var primaryConfigurationInProgress = false
@@ -150,6 +151,12 @@ final class DisplayMonitor: DisplayMonitoring {
 
     func setPrimaryDisplaySleeping(_ sleeping: Bool) {
         primaryIsSleeping = sleeping
+        guard !sleeping else { return }
+        scheduleEvaluation(forcePrimarySync: true)
+    }
+
+    func setPrimaryScreensSleeping(_ sleeping: Bool) {
+        primaryScreensAreSleeping = sleeping
         guard !sleeping else { return }
         scheduleEvaluation(forcePrimarySync: true)
     }
@@ -265,6 +272,7 @@ final class DisplayMonitor: DisplayMonitoring {
     private func synchronizePrimaryDisplay() {
         guard primarySyncEnabled,
               !primaryIsSleeping,
+              !primaryScreensAreSleeping,
               primaryHubConfigured,
               let configuredDisplayIdentifier else {
             return
