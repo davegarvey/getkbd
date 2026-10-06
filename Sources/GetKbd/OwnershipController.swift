@@ -15,6 +15,8 @@ final class OwnershipController {
     private var isSleeping = false
     private var manualTarget: DesiredKeyboardState?
     private var operationInProgress = false
+    private var operationTarget: DesiredKeyboardState?
+    private var restartClaimRequested = false
     private var failedDesiredState: DesiredKeyboardState?
     private var lastError: String?
     private var automaticRetryTask: Task<Void, Never>?
@@ -27,7 +29,7 @@ final class OwnershipController {
     private static let usbHubClaimDelayNanoseconds: UInt64 = 750_000_000
     // A sleeping keyboard may miss the first few pairing requests. Keep trying while this
     // Mac has the monitor's USB hub, leaving time for a key press to wake the keyboard.
-    private static let automaticClaimRetryDelaysNanoseconds: [UInt64] = [
+    nonisolated static let automaticClaimRetryDelaysNanoseconds: [UInt64] = [
         5_000_000_000,
         15_000_000_000,
         30_000_000_000,
@@ -40,12 +42,18 @@ final class OwnershipController {
         1_000_000_000
     ]
 
+    private let claimRetryDelaysNanoseconds: [UInt64]
+
     private var automaticClaimReady: Bool {
         !isSleeping && monitorPresent && usbHubPresent
     }
 
-    init(keyboard: KeyboardControlling) {
+    init(
+        keyboard: KeyboardControlling,
+        claimRetryDelaysNanoseconds: [UInt64] = OwnershipController.automaticClaimRetryDelaysNanoseconds
+    ) {
         self.keyboard = keyboard
+        self.claimRetryDelaysNanoseconds = claimRetryDelaysNanoseconds
         snapshot = OwnershipSnapshot(
             keyboardState: keyboard.state,
             ownershipReason: .none,
@@ -131,6 +139,32 @@ final class OwnershipController {
         updateIntent()
         publish()
         reconcile(force: true, immediate: true)
+    }
+
+    /// Starts a claim at once, stopping one that is still waiting for the keyboard to pair.
+    /// The current automatic or manual target is kept.
+    func connectNow() {
+        guard !isSleeping,
+              !hasPendingKeyboardConfiguration,
+              desiredState == .connected,
+              keyboard.state != .connectedLocal else {
+            return
+        }
+
+        GetKbdLog.event("keyboard.claim.now")
+        cancelAutomaticAttempts()
+        failedDesiredState = nil
+        lastError = nil
+
+        if operationInProgress {
+            guard operationTarget == .connected else { return }
+            restartClaimRequested = true
+            keyboard.cancelConnect()
+            publish()
+        } else {
+            publish()
+            reconcile(force: true, immediate: true)
+        }
     }
 
     func willSleep() {
@@ -261,6 +295,7 @@ final class OwnershipController {
         guard !operationInProgress, keyboard.bluetoothAvailability == .poweredOn else { return }
 
         operationInProgress = true
+        operationTarget = target
         lastError = nil
         publish()
 
@@ -280,8 +315,14 @@ final class OwnershipController {
     }
 
     private func finishOperation(target: DesiredKeyboardState, succeeded: Bool) {
-        operationInProgress = false
+        let restartClaim = restartClaimRequested && target == .connected
+        restartClaimRequested = false
+
+        // Refresh while still busy so that the state change does not reconcile before the
+        // outcome below is recorded.
         keyboard.refreshState()
+        operationInProgress = false
+        operationTarget = nil
 
         if hasPendingKeyboardConfiguration {
             if keyboard.state == .connectedLocal {
@@ -305,22 +346,32 @@ final class OwnershipController {
         if succeeded {
             failedDesiredState = nil
             lastError = nil
+            cancelAutomaticRetry()
+            automaticRetryCount = 0
             if target == .connected {
                 cancelUSBHubClaim()
             }
             updateIntent()
+        } else if restartClaim {
+            failedDesiredState = nil
+            lastError = nil
         } else {
             failedDesiredState = target
             lastError = keyboard.lastError ?? "Bluetooth operation failed"
         }
 
-        publish()
-
         if desiredState != target {
             failedDesiredState = nil
+            publish()
             reconcile(force: true, immediate: desiredState == .connected && manualTarget != nil)
-        } else if !succeeded, manualTarget == nil {
-            scheduleAutomaticRetry(for: target)
+        } else if !succeeded, restartClaim {
+            publish()
+            reconcile(force: true, immediate: true)
+        } else {
+            if !succeeded, manualTarget == nil {
+                scheduleAutomaticRetry(for: target)
+            }
+            publish()
         }
     }
 
@@ -376,7 +427,7 @@ final class OwnershipController {
 
     private func scheduleAutomaticRetry(for target: DesiredKeyboardState) {
         let delays = target == .connected
-            ? Self.automaticClaimRetryDelaysNanoseconds
+            ? claimRetryDelaysNanoseconds
             : Self.automaticReleaseRetryDelaysNanoseconds
         guard keyboard.bluetoothAvailability == .poweredOn,
               manualTarget == nil,
@@ -398,6 +449,7 @@ final class OwnershipController {
                   self.manualTarget == nil,
                   self.desiredState == target,
                   target == .connected ? self.automaticClaimReady : !self.automaticClaimReady else {
+                self.publish()
                 return
             }
 
@@ -428,6 +480,13 @@ final class OwnershipController {
         automaticRetryTask = nil
     }
 
+    private var isRetryingClaim: Bool {
+        desiredState == .connected &&
+            keyboard.state != .connectedLocal &&
+            automaticRetryCount > 0 &&
+            (automaticRetryTask != nil || operationTarget == .connected)
+    }
+
     private func publish() {
         snapshot = OwnershipSnapshot(
             keyboardState: keyboard.state,
@@ -436,7 +495,8 @@ final class OwnershipController {
             usbHubPresent: usbHubPresent,
             isBusy: operationInProgress,
             errorMessage: lastError,
-            bluetoothAvailability: keyboard.bluetoothAvailability
+            bluetoothAvailability: keyboard.bluetoothAvailability,
+            isRetryingClaim: isRetryingClaim
         )
         onChange?(snapshot)
     }

@@ -36,13 +36,17 @@ struct GetKbdChecks {
         checkHubIdentification(hub)
         checkMonitorInputs(settings)
         await checkMonitorInputLearner()
+        await checkClaimRetries()
 
         print("GetKbd checks passed.")
     }
 
     @MainActor
     private static func checkBluetoothPowerActivation() async {
-        let icon = MenuBarController.statusImage(for: .disconnected, bluetooth: .poweredOff, title: "Bluetooth is off")
+        let iconSnapshot = OwnershipSnapshot(keyboardState: .disconnected, ownershipReason: .none,
+                                             monitorPresent: false, usbHubPresent: false, isBusy: false,
+                                             errorMessage: nil, bluetoothAvailability: .poweredOff)
+        let icon = MenuBarController.statusImage(for: iconSnapshot, title: "Bluetooth is off")
         check(icon?.isTemplate == true && icon?.size == NSSize(width: 22, height: 18),
               "Bluetooth warning keeps keyboard with a template badge")
         let preview = NSImage(size: NSSize(width: 220, height: 180), flipped: false) { rect in
@@ -182,6 +186,25 @@ struct GetKbdChecks {
         check(status(.disconnected, hub: true).action == .get, "monitor here offers get")
         check(status(.disconnected, monitor: false, hub: false).action == .get, "offline monitor offers get")
         check(status(.failed, hub: true).action == .retry, "failure offers retry")
+
+        let connecting = status(.connecting, hub: true)
+        check(connecting.title == "Connecting keyboard…" && connecting.action == .tryNow, "claim in progress offers try now")
+        check(status(.disconnecting, hub: false).action == nil, "release in progress offers no action")
+
+        let retrying = MenuStatus.make(
+            settings: settings,
+            snapshot: OwnershipSnapshot(
+                keyboardState: .disconnected,
+                ownershipReason: .usbHub,
+                monitorPresent: true,
+                usbHubPresent: true,
+                isBusy: false,
+                errorMessage: "Bluetooth pairing timed out",
+                isRetryingClaim: true
+            ),
+            desiredState: .connected
+        )
+        check(retrying.title == "Keyboard isn’t responding" && retrying.action == .tryNow, "retry loop offers try now")
     }
 
     private static func checkHubIdentification(_ hub: USBHubDescriptor) {
@@ -264,6 +287,101 @@ struct GetKbdChecks {
         silent.learn(displayIdentifier: "d", hubPresent: true)
         await silent.waitForIdle()
         check(available == false, "silent monitor is reported unavailable")
+    }
+
+    @MainActor
+    private static func checkClaimRetries() async {
+        final class Keyboard: KeyboardControlling {
+            var configuredKeyboard: KeyboardDescriptor? = KeyboardDescriptor(identifier: "k", name: "Keyboard")
+            var state: KeyboardConnectionState = .disconnected
+            var lastError: String?
+            var onStateChange: ((KeyboardConnectionState) -> Void)?
+            var connectCount = 0
+            var cancelCount = 0
+            var failures = 0
+            var blockNext = false
+            var blocked: CheckedContinuation<Bool, Never>?
+
+            func availableKeyboards() async -> [KeyboardDescriptor] { [] }
+            func stop() {}
+            func refreshState() {
+                if state == .failed { state = .disconnected }
+                onStateChange?(state)
+            }
+            func connect() async -> Bool {
+                connectCount += 1
+                state = .connecting
+                onStateChange?(state)
+                var succeeded = true
+                if blockNext {
+                    blockNext = false
+                    succeeded = await withCheckedContinuation { blocked = $0 }
+                } else if failures > 0 {
+                    failures -= 1
+                    succeeded = false
+                }
+                state = succeeded ? .connectedLocal : .failed
+                onStateChange?(state)
+                return succeeded
+            }
+            func cancelConnect() {
+                cancelCount += 1
+                blocked?.resume(returning: false)
+                blocked = nil
+            }
+            func disconnect() async -> Bool {
+                state = .disconnected
+                onStateChange?(state)
+                return true
+            }
+        }
+
+        let longDelay: [UInt64] = [60_000_000_000]
+
+        // A failed claim must wait for its scheduled retry, not the 0.75 s USB-hub claim.
+        let failing = Keyboard()
+        failing.failures = 1
+        let waiting = OwnershipController(keyboard: failing, claimRetryDelaysNanoseconds: longDelay)
+        waiting.start(monitorPresent: true, usbHubPresent: true)
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        check(failing.connectCount == 1, "failed claim waits for its scheduled retry")
+        check(waiting.snapshot.isRetryingClaim, "pending retry is reported")
+
+        waiting.connectNow()
+        await waiting.waitForIdle()
+        check(failing.connectCount == 2, "try now claims while a retry is pending")
+        check(waiting.snapshot.keyboardState == .connectedLocal, "try now connects")
+        check(waiting.snapshot.ownershipReason == .usbHub, "try now keeps the automatic target")
+        check(!waiting.snapshot.isRetryingClaim, "success ends the retry loop")
+
+        let exhausted = Keyboard()
+        exhausted.failures = 2
+        let finishing = OwnershipController(keyboard: exhausted, claimRetryDelaysNanoseconds: [0])
+        finishing.start(monitorPresent: true, usbHubPresent: true)
+        while exhausted.connectCount < 2 { await Task.yield() }
+        await finishing.waitForIdle()
+        check(exhausted.connectCount == 2 && !finishing.snapshot.isRetryingClaim, "retry loop ends after the last retry")
+
+        let stuck = Keyboard()
+        stuck.blockNext = true
+        let restarting = OwnershipController(keyboard: stuck)
+        restarting.start(monitorPresent: true, usbHubPresent: true)
+        while stuck.blocked == nil { await Task.yield() }
+        restarting.connectNow()
+        await restarting.waitForIdle()
+        check(stuck.cancelCount == 1 && stuck.connectCount == 2, "try now stops a claim in progress and starts another")
+        check(restarting.snapshot.keyboardState == .connectedLocal, "restarted claim connects")
+        check(restarting.snapshot.errorMessage == nil, "cancelled claim leaves no error")
+
+        let stuckAgain = Keyboard()
+        stuckAgain.blockNext = true
+        stuckAgain.failures = 1
+        let rescheduling = OwnershipController(keyboard: stuckAgain, claimRetryDelaysNanoseconds: longDelay)
+        rescheduling.start(monitorPresent: true, usbHubPresent: true)
+        while stuckAgain.blocked == nil { await Task.yield() }
+        rescheduling.connectNow()
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        check(stuckAgain.connectCount == 2 && rescheduling.snapshot.isRetryingClaim, "failed try now returns to the retry schedule")
     }
 
     private static func check(_ condition: Bool, _ name: String) {

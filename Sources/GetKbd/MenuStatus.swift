@@ -9,6 +9,7 @@ enum MenuAction: Equatable {
     case release
     case get
     case retry
+    case tryNow
     case enableBluetooth
     case bluetoothSettings
     case finishSetup
@@ -92,9 +93,13 @@ struct MenuStatus: Equatable {
             return MenuStatus(title: "Setup isn’t finished", action: .finishSetup)
         }
 
+        if snapshot.isRetryingClaim {
+            return MenuStatus(title: "Keyboard isn’t responding", action: .tryNow)
+        }
+
         switch snapshot.keyboardState {
         case .connecting:
-            return MenuStatus(title: "Connecting keyboard…", action: nil)
+            return MenuStatus(title: "Connecting keyboard…", action: .tryNow)
         case .disconnecting:
             return MenuStatus(title: "Releasing keyboard…", action: nil)
         default:
@@ -102,8 +107,9 @@ struct MenuStatus: Equatable {
         }
 
         if snapshot.isBusy {
-            let title = desiredState == .disconnected ? "Releasing keyboard…" : "Connecting keyboard…"
-            return MenuStatus(title: title, action: nil)
+            return desiredState == .disconnected
+                ? MenuStatus(title: "Releasing keyboard…", action: nil)
+                : MenuStatus(title: "Connecting keyboard…", action: .tryNow)
         }
 
         if snapshot.keyboardState == .failed {

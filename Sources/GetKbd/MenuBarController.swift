@@ -41,7 +41,7 @@ final class MenuBarController: NSObject {
     func refresh() {
         if ownership.snapshot.bluetoothAvailability == .poweredOn { bluetoothActivation = .idle }
         let status = currentStatus
-        statusItem.button?.image = Self.statusImage(for: ownership.snapshot.keyboardState, bluetooth: ownership.snapshot.bluetoothAvailability, title: status.title)
+        statusItem.button?.image = Self.statusImage(for: ownership.snapshot, title: status.title)
         statusItem.button?.image?.isTemplate = true
         statusItem.button?.toolTip = status.title
         statusItem.menu = makeMenu(for: status)
@@ -110,6 +110,9 @@ final class MenuBarController: NSObject {
         case .retry:
             title = "Try Again"
             selector = #selector(retryKeyboard)
+        case .tryNow:
+            title = "Try Now"
+            selector = #selector(tryKeyboardNow)
         case .enableBluetooth:
             title = "Turn Bluetooth On"
             selector = #selector(turnBluetoothOn)
@@ -143,21 +146,30 @@ final class MenuBarController: NSObject {
         return item
     }
 
-    static func statusImage(for state: KeyboardConnectionState, bluetooth: BluetoothAvailability, title: String) -> NSImage? {
+    static func statusImage(for snapshot: OwnershipSnapshot, title: String) -> NSImage? {
         let symbolName: String
-        switch state {
-        case .failed:
-            symbolName = "keyboard"
-        case .disconnected, .unknown:
-            symbolName = "keyboard"
-        case .connecting, .disconnecting, .connectedLocal:
-            symbolName = "keyboard.fill"
+        if snapshot.isBusy || snapshot.isRetryingClaim {
+            // Distinct from the filled icon so that an attempt is not mistaken for a connection.
+            symbolName = "keyboard.badge.ellipsis"
+        } else {
+            switch snapshot.keyboardState {
+            case .failed:
+                symbolName = "keyboard"
+            case .disconnected, .unknown:
+                symbolName = "keyboard"
+            case .connecting, .disconnecting:
+                symbolName = "keyboard.badge.ellipsis"
+            case .connectedLocal:
+                symbolName = "keyboard.fill"
+            }
         }
 
         guard let keyboardImage = NSImage(systemSymbolName: symbolName, accessibilityDescription: title) else {
             return nil
         }
-        guard bluetooth != .poweredOn || state == .failed else { return keyboardImage }
+        guard snapshot.bluetoothAvailability != .poweredOn || snapshot.keyboardState == .failed else {
+            return keyboardImage
+        }
         return warningImage(keyboard: keyboardImage, title: title)
     }
 
@@ -210,6 +222,10 @@ final class MenuBarController: NSObject {
         } else {
             ownership.manualClaim()
         }
+    }
+
+    @objc private func tryKeyboardNow() {
+        ownership.connectNow()
     }
 
     @objc private func switchMonitorToOtherMac() {
