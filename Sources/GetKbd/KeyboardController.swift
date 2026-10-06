@@ -6,6 +6,8 @@ import Foundation
 protocol KeyboardControlling: AnyObject {
     var configuredKeyboard: KeyboardDescriptor? { get set }
     var state: KeyboardConnectionState { get }
+    var bluetoothAvailability: BluetoothAvailability { get }
+    var onBluetoothAvailabilityChange: (() -> Void)? { get set }
     var lastError: String? { get }
     var onStateChange: ((KeyboardConnectionState) -> Void)? { get set }
 
@@ -78,6 +80,9 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     private var stateValue: KeyboardConnectionState = .unknown
     private var connectCancellation: CancellationFlag?
     private var observers: [NSObjectProtocol] = []
+    private var powerTimer: Timer?
+    private(set) var bluetoothAvailability: BluetoothAvailability = .unavailable
+    var onBluetoothAvailabilityChange: (() -> Void)?
 
     var configuredKeyboard: KeyboardDescriptor? {
         didSet {
@@ -91,7 +96,14 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
 
     init(configuredKeyboard: KeyboardDescriptor?) {
         self.configuredKeyboard = configuredKeyboard
+        refreshState()
         installObservers()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshBluetoothAvailability() }
+        }
+        timer.tolerance = 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        powerTimer = timer
     }
 
     func availableKeyboards() async -> [KeyboardDescriptor] {
@@ -103,11 +115,47 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func stop() {
+        powerTimer?.invalidate()
+        powerTimer = nil
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
     }
 
+    private func refreshBluetoothAvailability() {
+        let availability: BluetoothAvailability
+        switch IOBluetoothHostController.default()?.powerState {
+        case kBluetoothHCIPowerStateON: availability = .poweredOn
+        case kBluetoothHCIPowerStateOFF: availability = .poweredOff
+        default: availability = .unavailable
+        }
+        guard availability != bluetoothAvailability else { return }
+        if availability != .poweredOn { connectCancellation?.cancel() }
+        bluetoothAvailability = availability
+        lastError = nil
+        refreshConnectionState()
+        GetKbdLog.event("bluetooth.power.changed", availability == .poweredOn ? "on" : availability.title)
+        onBluetoothAvailabilityChange?()
+    }
+
+    private func requireBluetooth() -> Bool {
+        refreshBluetoothAvailability()
+        guard bluetoothAvailability == .poweredOn else {
+            lastError = bluetoothAvailability.title
+            return false
+        }
+        return true
+    }
+
     func refreshState() {
+        refreshBluetoothAvailability()
+        refreshConnectionState()
+    }
+
+    private func refreshConnectionState() {
+        guard bluetoothAvailability == .poweredOn else {
+            updateState(.disconnected)
+            return
+        }
         guard let identifier = configuredKeyboard?.identifier,
               let device = Self.device(identifier: identifier) else {
             updateState(.unknown)
@@ -118,6 +166,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func connect() async -> Bool {
+        guard requireBluetooth() else { return false }
         guard let box = await resolvedDevice() else {
             fail("No paired keyboard is selected")
             return false
@@ -142,6 +191,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             }
         }
 
+        guard requireBluetooth() else { return false }
         let removeResult = await runBluetoothCall { Self.removePairing(box.device) }
 
         guard let removeResult else {
@@ -162,10 +212,9 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         // reliably accept a new pairing attempt.
         try? await Task.sleep(nanoseconds: Self.handoffSettleDelayNanoseconds)
 
-        guard !cancellation.isCancelled else {
-            return cancelClaim()
+        guard requireBluetooth(), !cancellation.isCancelled else {
+            return cancellation.isCancelled ? cancelClaim() : false
         }
-
         GetKbdLog.event("keyboard.pair.started", configuredKeyboard?.name ?? "")
         let pairResult = await runBluetoothCall { Self.pairDevice(box.device, cancellation: cancellation) }
 
@@ -187,6 +236,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         }
 
         GetKbdLog.event("keyboard.pair.success")
+        guard requireBluetooth() else { return false }
         let returnCode = await runBluetoothCall { box.device.openConnection() }
 
         guard let returnCode else {
@@ -228,6 +278,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func disconnect() async -> Bool {
+        guard requireBluetooth() else { return false }
         guard let box = await resolvedDevice() else {
             fail("No paired keyboard is selected")
             return false

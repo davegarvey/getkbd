@@ -60,6 +60,12 @@ The selected display is a safety condition. If it is physically absent, getkbd r
 keyboard and will not automatically claim it. If both Macs see the monitor's USB hub, the hardware
 does not expose a unique active-host signal and automatic switching is not safe.
 
+When Bluetooth is off, the menu shows **Bluetooth is off** and offers **Turn Bluetooth On**.
+If activation fails, it offers **Open Bluetooth Settings…** instead. Direct activation uses an
+undocumented macOS API and verifies that Bluetooth is powered on before reporting success.
+Keyboard actions and automatic attempts pause until Bluetooth is available again; monitor switching remains available. Turning Bluetooth back on resumes keyboard
+handoff according to the current monitor and USB hub signals.
+
 ## Display behavior
 
 When setup is complete and **Switch the main display with the monitor** is on (the default),

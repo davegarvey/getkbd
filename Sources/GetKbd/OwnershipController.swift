@@ -60,9 +60,17 @@ final class OwnershipController {
             monitorPresent: false,
             usbHubPresent: false,
             isBusy: false,
-            errorMessage: nil
+            errorMessage: nil,
+            bluetoothAvailability: keyboard.bluetoothAvailability
         )
 
+        keyboard.onBluetoothAvailabilityChange = { [weak self] in
+            guard let self else { return }
+            self.resetAutomaticAttempts()
+            self.updateIntent()
+            self.publish()
+            self.reconcile(force: true, immediate: false)
+        }
         keyboard.onStateChange = { [weak self] _ in
             self?.keyboardStateChanged()
         }
@@ -116,7 +124,7 @@ final class OwnershipController {
     }
 
     func manualClaim() {
-        guard !isSleeping else { return }
+        guard !isSleeping, keyboard.bluetoothAvailability == .poweredOn else { return }
         manualTarget = .connected
         resetAutomaticAttempts()
         updateIntent()
@@ -125,6 +133,7 @@ final class OwnershipController {
     }
 
     func manualRelease() {
+        guard keyboard.bluetoothAvailability == .poweredOn else { return }
         manualTarget = .disconnected
         resetAutomaticAttempts()
         updateIntent()
@@ -251,7 +260,7 @@ final class OwnershipController {
     }
 
     private func reconcile(force: Bool, immediate: Bool) {
-        guard !operationInProgress else { return }
+        guard !operationInProgress, keyboard.bluetoothAvailability == .poweredOn else { return }
 
         if !hasPendingKeyboardConfiguration {
             updateIntent()
@@ -283,7 +292,7 @@ final class OwnershipController {
     }
 
     private func beginOperation(for target: DesiredKeyboardState) {
-        guard !operationInProgress else { return }
+        guard !operationInProgress, keyboard.bluetoothAvailability == .poweredOn else { return }
 
         operationInProgress = true
         operationTarget = target
@@ -420,7 +429,8 @@ final class OwnershipController {
         let delays = target == .connected
             ? claimRetryDelaysNanoseconds
             : Self.automaticReleaseRetryDelaysNanoseconds
-        guard manualTarget == nil,
+        guard keyboard.bluetoothAvailability == .poweredOn,
+              manualTarget == nil,
               automaticRetryCount < delays.count,
               automaticRetryTask == nil else {
             return
@@ -485,6 +495,7 @@ final class OwnershipController {
             usbHubPresent: usbHubPresent,
             isBusy: operationInProgress,
             errorMessage: lastError,
+            bluetoothAvailability: keyboard.bluetoothAvailability,
             isRetryingClaim: isRetryingClaim
         )
         onChange?(snapshot)

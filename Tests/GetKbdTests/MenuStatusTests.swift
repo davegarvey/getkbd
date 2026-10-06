@@ -2,6 +2,31 @@ import XCTest
 @testable import GetKbd
 
 final class MenuStatusTests: XCTestCase {
+    func testBluetoothOffOverridesFailureBusyAndSetupButKeepsMonitorSwitching() {
+        for state in [KeyboardConnectionState.disconnected, .connectedLocal, .failed, .connecting] {
+            let status = make(snapshot(keyboard: state, busy: true, bluetooth: .poweredOff))
+            XCTAssertEqual(status.title, "Bluetooth is off")
+            XCTAssertEqual(status.action, .enableBluetooth)
+        }
+        XCTAssertEqual(MenuStatus.make(settings: .initial, snapshot: snapshot(bluetooth: .poweredOff),
+                                       desiredState: nil).action, .enableBluetooth)
+        let status = MenuStatus.make(settings: settingsWithInputs(thisMac: 19, otherMac: 21),
+                                     snapshot: snapshot(bluetooth: .poweredOff), desiredState: .connected,
+                                     monitorControlAvailable: true)
+        XCTAssertEqual(status.monitorAction, .switchToOtherMac)
+        XCTAssertEqual(make(snapshot(bluetooth: .unavailable)).title, "Bluetooth is unavailable")
+    }
+
+    func testBluetoothActivationPendingAndFailure() {
+        let off = snapshot(bluetooth: .poweredOff)
+        XCTAssertEqual(MenuStatus.make(settings: configuredSettings, snapshot: off, desiredState: nil,
+                                       bluetoothActivation: .enabling),
+                       MenuStatus(title: "Turning Bluetooth on…", action: nil))
+        XCTAssertEqual(MenuStatus.make(settings: configuredSettings, snapshot: off, desiredState: nil,
+                                       bluetoothActivation: .failed),
+                       MenuStatus(title: "Couldn’t turn Bluetooth on", action: .bluetoothSettings))
+    }
+
     func testSetupNotFinished() {
         let status = MenuStatus.make(settings: .initial, snapshot: snapshot(), desiredState: nil)
 
@@ -114,7 +139,8 @@ final class MenuStatusTests: XCTestCase {
         keyboard: KeyboardConnectionState = .disconnected,
         monitor: Bool = true,
         usbHub: Bool = true,
-        busy: Bool = false
+        busy: Bool = false,
+        bluetooth: BluetoothAvailability = .poweredOn
     ) -> OwnershipSnapshot {
         OwnershipSnapshot(
             keyboardState: keyboard,
@@ -122,7 +148,8 @@ final class MenuStatusTests: XCTestCase {
             monitorPresent: monitor,
             usbHubPresent: usbHub,
             isBusy: busy,
-            errorMessage: nil
+            errorMessage: nil,
+            bluetoothAvailability: bluetooth
         )
     }
 }
