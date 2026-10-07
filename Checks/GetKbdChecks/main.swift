@@ -398,6 +398,10 @@ struct GetKbdChecks {
             var failures = 0
             var blockNext = false
             var blocked: CheckedContinuation<Bool, Never>?
+            var connectStartTimes: [UInt64] = []
+            var connectDelayNanoseconds: UInt64 = 0
+            var activeConnectCount = 0
+            var maximumConcurrentConnectCount = 0
 
             func availableKeyboards() async -> [KeyboardDescriptor] { [] }
             func stop() {}
@@ -407,9 +411,16 @@ struct GetKbdChecks {
             }
             func connect() async -> Bool {
                 connectCount += 1
+                connectStartTimes.append(DispatchTime.now().uptimeNanoseconds)
+                activeConnectCount += 1
+                maximumConcurrentConnectCount = max(maximumConcurrentConnectCount, activeConnectCount)
+                defer { activeConnectCount -= 1 }
                 state = .connecting
                 onStateChange?(state)
                 var succeeded = true
+                if connectDelayNanoseconds > 0 {
+                    try? await Task.sleep(nanoseconds: connectDelayNanoseconds)
+                }
                 if blockNext {
                     blockNext = false
                     succeeded = await withCheckedContinuation { blocked = $0 }
@@ -433,12 +444,17 @@ struct GetKbdChecks {
             }
         }
 
-        let longDelay: [UInt64] = [60_000_000_000]
+        let longDelay = AutomaticClaimRetryPolicy(
+            fastRecoveryWindowNanoseconds: 120_000_000_000,
+            minimumStartIntervalNanoseconds: 60_000_000_000,
+            slowRetryDelaysNanoseconds: [60_000_000_000],
+            releaseRetryDelaysNanoseconds: [1_000_000_000, 1_000_000_000]
+        )
 
         // A failed claim must wait for its scheduled retry, not the 0.75 s USB-hub claim.
         let failing = Keyboard()
         failing.failures = 1
-        let waiting = OwnershipController(keyboard: failing, claimRetryDelaysNanoseconds: longDelay)
+        let waiting = OwnershipController(keyboard: failing, claimRetryPolicy: longDelay)
         waiting.start(monitorPresent: true, usbHubPresent: true)
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         check(failing.connectCount == 1, "failed claim waits for its scheduled retry")
@@ -453,11 +469,54 @@ struct GetKbdChecks {
 
         let exhausted = Keyboard()
         exhausted.failures = 2
-        let finishing = OwnershipController(keyboard: exhausted, claimRetryDelaysNanoseconds: [0])
+        let immediateRetry = AutomaticClaimRetryPolicy(
+            fastRecoveryWindowNanoseconds: 0,
+            minimumStartIntervalNanoseconds: 0,
+            slowRetryDelaysNanoseconds: [0],
+            releaseRetryDelaysNanoseconds: [1_000_000_000, 1_000_000_000]
+        )
+        let finishing = OwnershipController(keyboard: exhausted, claimRetryPolicy: immediateRetry)
         finishing.start(monitorPresent: true, usbHubPresent: true)
         while exhausted.connectCount < 2 { await Task.yield() }
         await finishing.waitForIdle()
         check(exhausted.connectCount == 2 && !finishing.snapshot.isRetryingClaim, "retry loop ends after the last retry")
+
+        let rapidFailures = Keyboard()
+        rapidFailures.failures = 2
+        rapidFailures.connectDelayNanoseconds = 40_000_000
+        let fastPolicy = AutomaticClaimRetryPolicy(
+            fastRecoveryWindowNanoseconds: 300_000_000,
+            minimumStartIntervalNanoseconds: 20_000_000,
+            slowRetryDelaysNanoseconds: [60_000_000],
+            releaseRetryDelaysNanoseconds: [1_000_000_000, 1_000_000_000]
+        )
+        let fast = OwnershipController(keyboard: rapidFailures, claimRetryPolicy: fastPolicy)
+        fast.start(monitorPresent: true, usbHubPresent: true)
+        while rapidFailures.connectCount < 3 { await Task.yield() }
+        await fast.waitForIdle()
+        check(rapidFailures.connectCount == 3, "fast recovery retries ordinary failures consecutively")
+        check(rapidFailures.connectStartTimes[1] - rapidFailures.connectStartTimes[0] < 100_000_000,
+              "fast recovery adds no delay after an ordinary failed claim")
+        check(rapidFailures.maximumConcurrentConnectCount == 1, "automatic claims remain single flight")
+
+        let slowFailures = Keyboard()
+        slowFailures.failures = 3
+        let slowPolicy = AutomaticClaimRetryPolicy(
+            fastRecoveryWindowNanoseconds: 0,
+            minimumStartIntervalNanoseconds: 0,
+            slowRetryDelaysNanoseconds: [20_000_000, 40_000_000],
+            releaseRetryDelaysNanoseconds: [1_000_000_000, 1_000_000_000]
+        )
+        let slow = OwnershipController(keyboard: slowFailures, claimRetryPolicy: slowPolicy)
+        slow.start(monitorPresent: true, usbHubPresent: true)
+        while slowFailures.connectCount < 3 { await Task.yield() }
+        await slow.waitForIdle()
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        check(slowFailures.connectCount == 3, "slow backoff stops after its final retry")
+        check(slowFailures.connectStartTimes[1] - slowFailures.connectStartTimes[0] >= 20_000_000,
+              "first slow retry waits its configured delay")
+        check(slowFailures.connectStartTimes[2] - slowFailures.connectStartTimes[1] >= 40_000_000,
+              "second slow retry waits its configured delay")
 
         let stuck = Keyboard()
         stuck.blockNext = true
@@ -473,7 +532,7 @@ struct GetKbdChecks {
         let stuckAgain = Keyboard()
         stuckAgain.blockNext = true
         stuckAgain.failures = 1
-        let rescheduling = OwnershipController(keyboard: stuckAgain, claimRetryDelaysNanoseconds: longDelay)
+        let rescheduling = OwnershipController(keyboard: stuckAgain, claimRetryPolicy: longDelay)
         rescheduling.start(monitorPresent: true, usbHubPresent: true)
         while stuckAgain.blocked == nil { await Task.yield() }
         rescheduling.connectNow()

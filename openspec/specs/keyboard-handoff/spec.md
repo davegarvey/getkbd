@@ -170,9 +170,10 @@ window relocation resulting from a primary-display change.
 ### Requirement: Reconcile ownership changes and retry automatic operations
 
 The system SHALL converge toward the latest desired keyboard state after an
-in-flight operation and SHALL retry eligible automatic failures a limited number
-of times. The system SHALL let the user restart a claim immediately while one is
-in progress or awaiting retry.
+in-flight operation and SHALL retry eligible automatic failures a bounded number
+of times. Automatic claim retries SHALL run sequentially and SHALL give the
+keyboard a rapid recovery period before backing off. The system SHALL let the
+user restart a claim immediately while one is in progress or awaiting retry.
 
 #### Scenario: Sensor reverses during a claim
 
@@ -184,9 +185,24 @@ in progress or awaiting retry.
 
 - **WHEN** an automatic claim or release fails while its triggering condition
   remains valid
-- **THEN** getkbd SHALL retry after the next scheduled delay, up to six claim
-  retries with delays increasing from 5 to 60 seconds or two release retries one
-  second apart, and SHALL stop retrying when the condition no longer applies
+- **THEN** getkbd SHALL retry claims using the fast recovery window and bounded
+  backoff, SHALL retry releases twice one second apart, and SHALL stop retrying
+  when the triggering condition no longer applies
+
+#### Scenario: Automatic claim retries during the fast recovery window
+
+- **WHEN** an automatic claim fails while the monitor and selected USB hub
+  conditions remain eligible
+- **THEN** getkbd SHALL start the next claim as soon as the failed claim finishes
+  for the first two minutes of the retry cycle, SHALL keep no more than one claim
+  in flight, and SHALL start no more than one claim in any five-second interval
+
+#### Scenario: Automatic claim backs off after the fast recovery window
+
+- **WHEN** automatic claims continue to fail after the first two minutes of the
+  retry cycle while the monitor and selected USB hub conditions remain eligible
+- **THEN** getkbd SHALL retry after waits of 15 seconds, 30 seconds, and 60
+  seconds, in that order, and SHALL stop after the final retry
 
 #### Scenario: Manual action overrides an automatic intent
 
@@ -211,7 +227,15 @@ in progress or awaiting retry.
 
 - **WHEN** a claim started with Try Now fails while its automatic triggering
   condition remains valid
-- **THEN** getkbd SHALL retry it on the automatic schedule from the first delay
+- **THEN** getkbd SHALL resume the automatic retry cycle from its fast recovery
+  window
+
+#### Scenario: Local signal becomes eligible again after retry failures
+
+- **WHEN** a monitor or selected USB hub transition makes the automatic claim
+  condition eligible again after a failed or exhausted retry cycle
+- **THEN** getkbd SHALL reset the retry cycle and begin a new automatic claim
+  without waiting for the previous cycle's backoff
 
 ### Requirement: Preserve safe behavior across sleep and restart
 
