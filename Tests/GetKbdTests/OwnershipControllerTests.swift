@@ -155,7 +155,10 @@ final class OwnershipControllerTests: XCTestCase {
     func testFailedAutomaticClaimWaitsForItsScheduledRetry() async throws {
         let keyboard = FakeKeyboardController()
         keyboard.failNextConnects = 1
-        let controller = OwnershipController(keyboard: keyboard, claimRetryDelaysNanoseconds: [60_000_000_000])
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            claimRetryPolicy: retryPolicy(fastWindow: 0, slowDelays: [60_000_000_000])
+        )
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         try await Task.sleep(nanoseconds: 2_000_000_000)
@@ -168,7 +171,10 @@ final class OwnershipControllerTests: XCTestCase {
     func testRetryLoopEndsAfterLastRetry() async {
         let keyboard = FakeKeyboardController()
         keyboard.failNextConnects = 2
-        let controller = OwnershipController(keyboard: keyboard, claimRetryDelaysNanoseconds: [0])
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            claimRetryPolicy: retryPolicy(fastWindow: 0, slowDelays: [0])
+        )
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         await keyboard.waitUntilConnectCount(2)
@@ -182,7 +188,10 @@ final class OwnershipControllerTests: XCTestCase {
     func testTryNowClaimsImmediatelyWhileRetryIsPending() async throws {
         let keyboard = FakeKeyboardController()
         keyboard.failNextConnects = 1
-        let controller = OwnershipController(keyboard: keyboard, claimRetryDelaysNanoseconds: [60_000_000_000])
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            claimRetryPolicy: retryPolicy(fastWindow: 0, slowDelays: [60_000_000_000])
+        )
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         try await Task.sleep(nanoseconds: 2_000_000_000)
@@ -213,19 +222,142 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertNil(controller.snapshot.errorMessage)
     }
 
-    func testFailedTryNowRestartsTheRetrySchedule() async throws {
+    func testFailedTryNowRestartsTheFastRecoveryWindow() async {
         let keyboard = FakeKeyboardController()
         keyboard.blockNextConnect = true
         keyboard.failNextConnects = 1
-        let controller = OwnershipController(keyboard: keyboard, claimRetryDelaysNanoseconds: [60_000_000_000])
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            claimRetryPolicy: retryPolicy(fastWindow: 1_000_000_000, minimumInterval: 100_000_000)
+        )
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         await keyboard.waitUntilConnectIsBlocked()
         controller.connectNow()
-        try await Task.sleep(nanoseconds: 2_000_000_000)
+        await keyboard.waitUntilConnectCount(3)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 3)
+        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+        XCTAssertEqual(keyboard.maximumConcurrentConnectCount, 1)
+    }
+
+    func testFastRecoveryRetriesWithoutAdditionalDelayAfterOrdinaryFailure() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.failNextConnects = 3
+        keyboard.connectDelayNanoseconds = 40_000_000
+        let policy = retryPolicy(fastWindow: 300_000_000, minimumInterval: 20_000_000)
+        let controller = OwnershipController(keyboard: keyboard, claimRetryPolicy: policy)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await keyboard.waitUntilConnectCount(4)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 4)
+        XCTAssertEqual(keyboard.maximumConcurrentConnectCount, 1)
+        XCTAssertLessThan(keyboard.connectStartTimes[1] - keyboard.connectStartTimes[0], 100_000_000)
+        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+    }
+
+    func testFastRecoveryEnforcesMinimumIntervalForImmediateFailures() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.failNextConnects = 1
+        let policy = retryPolicy(fastWindow: 1_000_000_000, minimumInterval: 100_000_000)
+        let controller = OwnershipController(keyboard: keyboard, claimRetryPolicy: policy)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await keyboard.waitUntilConnectCount(1)
+        try? await Task.sleep(nanoseconds: 40_000_000)
+        XCTAssertEqual(keyboard.connectCallCount, 1)
+
+        await keyboard.waitUntilConnectCount(2)
+        await controller.waitForIdle()
+
+        XCTAssertGreaterThanOrEqual(keyboard.connectStartTimes[1] - keyboard.connectStartTimes[0], 100_000_000)
+    }
+
+    func testAutomaticClaimsUseSlowBackoffAndStopAfterFinalRetry() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.failNextConnects = 4
+        keyboard.connectDelayNanoseconds = 10_000_000
+        let policy = retryPolicy(
+            fastWindow: 0,
+            slowDelays: [40_000_000, 80_000_000, 120_000_000]
+        )
+        let controller = OwnershipController(keyboard: keyboard, claimRetryPolicy: policy)
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await keyboard.waitUntilConnectCount(4)
+        await controller.waitForIdle()
+        try? await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(keyboard.connectCallCount, 4)
+        XCTAssertGreaterThanOrEqual(keyboard.connectStartTimes[1] - keyboard.connectStartTimes[0], 40_000_000)
+        XCTAssertGreaterThanOrEqual(keyboard.connectStartTimes[2] - keyboard.connectStartTimes[1], 80_000_000)
+        XCTAssertGreaterThanOrEqual(keyboard.connectStartTimes[3] - keyboard.connectStartTimes[2], 120_000_000)
+        XCTAssertFalse(controller.snapshot.isRetryingClaim)
+    }
+
+    func testSignalTransitionStartsANewFastRetryCycle() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.failNextConnects = 1
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            claimRetryPolicy: retryPolicy(fastWindow: 0, slowDelays: [60_000_000_000])
+        )
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await keyboard.waitUntilConnectCount(1)
+        while !controller.snapshot.isRetryingClaim {
+            await Task.yield()
+        }
+
+        controller.usbHubDisconnected()
+        controller.usbHubConnected()
+        await keyboard.waitUntilConnectCount(2)
+        await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.connectCallCount, 2)
-        XCTAssertTrue(controller.snapshot.isRetryingClaim)
+        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+    }
+
+    func testWakeStartsANewFastRetryCycle() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.failNextConnects = 1
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            claimRetryPolicy: retryPolicy(fastWindow: 0, slowDelays: [60_000_000_000])
+        )
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        await keyboard.waitUntilConnectCount(1)
+        while !controller.snapshot.isRetryingClaim {
+            await Task.yield()
+        }
+
+        controller.didWake(monitorPresent: true, usbHubPresent: true)
+        await keyboard.waitUntilConnectCount(2)
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.connectCallCount, 2)
+        XCTAssertEqual(controller.snapshot.keyboardState, .connectedLocal)
+    }
+
+    func testAutomaticReleaseRetriesRemainUnchanged() async {
+        let keyboard = FakeKeyboardController()
+        keyboard.currentState = .connectedLocal
+        keyboard.failNextDisconnects = 1
+        let controller = OwnershipController(
+            keyboard: keyboard,
+            claimRetryPolicy: retryPolicy(fastWindow: 0, releaseDelays: [0])
+        )
+
+        controller.start(monitorPresent: true, usbHubPresent: true)
+        controller.usbHubDisconnected()
+        await controller.waitForIdle()
+
+        XCTAssertEqual(keyboard.disconnectCallCount, 2)
+        XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
     }
 
     func testTryNowDoesNothingWhenReleasing() async {
@@ -240,6 +372,20 @@ final class OwnershipControllerTests: XCTestCase {
         XCTAssertEqual(keyboard.connectCallCount, 0)
         XCTAssertEqual(keyboard.cancelConnectCallCount, 0)
         XCTAssertEqual(controller.snapshot.keyboardState, .disconnected)
+    }
+
+    private func retryPolicy(
+        fastWindow: UInt64,
+        minimumInterval: UInt64 = 0,
+        slowDelays: [UInt64] = [],
+        releaseDelays: [UInt64] = [1_000_000_000, 1_000_000_000]
+    ) -> AutomaticClaimRetryPolicy {
+        AutomaticClaimRetryPolicy(
+            fastRecoveryWindowNanoseconds: fastWindow,
+            minimumStartIntervalNanoseconds: minimumInterval,
+            slowRetryDelaysNanoseconds: slowDelays,
+            releaseRetryDelaysNanoseconds: releaseDelays
+        )
     }
 }
 
@@ -256,10 +402,15 @@ private final class FakeKeyboardController: KeyboardControlling {
     var onStateChange: ((KeyboardConnectionState) -> Void)?
     var connectCallCount = 0
     var disconnectCallCount = 0
+    var maximumConcurrentConnectCount = 0
+    var connectStartTimes: [UInt64] = []
+    var connectDelayNanoseconds: UInt64 = 0
     var blockNextConnect = false
     var failNextConnects = 0
+    var failNextDisconnects = 0
     var cancelConnectCallCount = 0
     private var blockedConnectContinuation: CheckedContinuation<Bool, Never>?
+    private var activeConnectCount = 0
 
     var state: KeyboardConnectionState { currentState }
 
@@ -276,8 +427,16 @@ private final class FakeKeyboardController: KeyboardControlling {
 
     func connect() async -> Bool {
         connectCallCount += 1
+        connectStartTimes.append(DispatchTime.now().uptimeNanoseconds)
+        activeConnectCount += 1
+        maximumConcurrentConnectCount = max(maximumConcurrentConnectCount, activeConnectCount)
+        defer { activeConnectCount -= 1 }
         currentState = .connecting
         notify()
+
+        if connectDelayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: connectDelayNanoseconds)
+        }
 
         if blockNextConnect {
             blockNextConnect = false
@@ -311,6 +470,13 @@ private final class FakeKeyboardController: KeyboardControlling {
         disconnectCallCount += 1
         currentState = .disconnecting
         notify()
+        if failNextDisconnects > 0 {
+            failNextDisconnects -= 1
+            lastError = "Bluetooth operation failed"
+            currentState = .failed
+            notify()
+            return false
+        }
         currentState = .disconnected
         notify()
         return true

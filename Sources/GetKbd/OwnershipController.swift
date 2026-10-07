@@ -1,5 +1,19 @@
 import Foundation
 
+struct AutomaticClaimRetryPolicy: Sendable {
+    let fastRecoveryWindowNanoseconds: UInt64
+    let minimumStartIntervalNanoseconds: UInt64
+    let slowRetryDelaysNanoseconds: [UInt64]
+    let releaseRetryDelaysNanoseconds: [UInt64]
+
+    static let standard = AutomaticClaimRetryPolicy(
+        fastRecoveryWindowNanoseconds: 120_000_000_000,
+        minimumStartIntervalNanoseconds: 5_000_000_000,
+        slowRetryDelaysNanoseconds: [15_000_000_000, 30_000_000_000, 60_000_000_000],
+        releaseRetryDelaysNanoseconds: [1_000_000_000, 1_000_000_000]
+    )
+}
+
 @MainActor
 final class OwnershipController {
     private let keyboard: KeyboardControlling
@@ -21,28 +35,17 @@ final class OwnershipController {
     private var lastError: String?
     private var automaticRetryTask: Task<Void, Never>?
     private var automaticRetryCount = 0
+    private var automaticClaimCycleStartedAtNanoseconds: UInt64?
+    private var lastAutomaticClaimStartedAtNanoseconds: UInt64?
+    private var automaticClaimSlowRetryCount = 0
+    private var automaticReleaseRetryCount = 0
     private var usbHubClaimTask: Task<Void, Never>?
     private var pendingKeyboard: KeyboardDescriptor?
     private var hasPendingKeyboardConfiguration = false
     private var reconfigurationReleaseAttempted = false
 
     private static let usbHubClaimDelayNanoseconds: UInt64 = 750_000_000
-    // A sleeping keyboard may miss the first few pairing requests. Keep trying while this
-    // Mac has the monitor's USB hub, leaving time for a key press to wake the keyboard.
-    nonisolated static let automaticClaimRetryDelaysNanoseconds: [UInt64] = [
-        5_000_000_000,
-        15_000_000_000,
-        30_000_000_000,
-        60_000_000_000,
-        60_000_000_000,
-        60_000_000_000
-    ]
-    private static let automaticReleaseRetryDelaysNanoseconds: [UInt64] = [
-        1_000_000_000,
-        1_000_000_000
-    ]
-
-    private let claimRetryDelaysNanoseconds: [UInt64]
+    private let claimRetryPolicy: AutomaticClaimRetryPolicy
 
     private var automaticClaimReady: Bool {
         !isSleeping && monitorPresent && usbHubPresent
@@ -50,10 +53,10 @@ final class OwnershipController {
 
     init(
         keyboard: KeyboardControlling,
-        claimRetryDelaysNanoseconds: [UInt64] = OwnershipController.automaticClaimRetryDelaysNanoseconds
+        claimRetryPolicy: AutomaticClaimRetryPolicy = .standard
     ) {
         self.keyboard = keyboard
-        self.claimRetryDelaysNanoseconds = claimRetryDelaysNanoseconds
+        self.claimRetryPolicy = claimRetryPolicy
         snapshot = OwnershipSnapshot(
             keyboardState: keyboard.state,
             ownershipReason: .none,
@@ -198,8 +201,8 @@ final class OwnershipController {
 
         if keyboard.state == .connectedLocal {
             failedDesiredState = nil
-            automaticRetryCount = 0
             cancelAutomaticRetry()
+            resetRetryTracking()
         }
 
         reconcile(force: false, immediate: false)
@@ -294,6 +297,12 @@ final class OwnershipController {
     private func beginOperation(for target: DesiredKeyboardState) {
         guard !operationInProgress, keyboard.bluetoothAvailability == .poweredOn else { return }
 
+        if target == .connected, manualTarget == nil {
+            let now = DispatchTime.now().uptimeNanoseconds
+            automaticClaimCycleStartedAtNanoseconds = automaticClaimCycleStartedAtNanoseconds ?? now
+            lastAutomaticClaimStartedAtNanoseconds = now
+        }
+
         operationInProgress = true
         operationTarget = target
         lastError = nil
@@ -347,7 +356,7 @@ final class OwnershipController {
             failedDesiredState = nil
             lastError = nil
             cancelAutomaticRetry()
-            automaticRetryCount = 0
+            resetRetryTracking()
             if target == .connected {
                 cancelUSBHubClaim()
             }
@@ -426,17 +435,37 @@ final class OwnershipController {
     }
 
     private func scheduleAutomaticRetry(for target: DesiredKeyboardState) {
-        let delays = target == .connected
-            ? claimRetryDelaysNanoseconds
-            : Self.automaticReleaseRetryDelaysNanoseconds
         guard keyboard.bluetoothAvailability == .poweredOn,
               manualTarget == nil,
-              automaticRetryCount < delays.count,
               automaticRetryTask == nil else {
             return
         }
 
-        let delay = delays[automaticRetryCount]
+        let delay: UInt64
+        if target == .connected {
+            let now = DispatchTime.now().uptimeNanoseconds
+            let cycleStartedAt = automaticClaimCycleStartedAtNanoseconds ?? now
+            automaticClaimCycleStartedAtNanoseconds = cycleStartedAt
+
+            if now - cycleStartedAt < claimRetryPolicy.fastRecoveryWindowNanoseconds {
+                let lastStartedAt = lastAutomaticClaimStartedAtNanoseconds ?? now
+                let earliestNextStart = lastStartedAt &+ claimRetryPolicy.minimumStartIntervalNanoseconds
+                delay = now >= earliestNextStart ? 0 : earliestNextStart - now
+            } else {
+                guard automaticClaimSlowRetryCount < claimRetryPolicy.slowRetryDelaysNanoseconds.count else {
+                    return
+                }
+                delay = claimRetryPolicy.slowRetryDelaysNanoseconds[automaticClaimSlowRetryCount]
+                automaticClaimSlowRetryCount += 1
+            }
+        } else {
+            guard automaticReleaseRetryCount < claimRetryPolicy.releaseRetryDelaysNanoseconds.count else {
+                return
+            }
+            delay = claimRetryPolicy.releaseRetryDelaysNanoseconds[automaticReleaseRetryCount]
+            automaticReleaseRetryCount += 1
+        }
+
         automaticRetryCount += 1
         automaticRetryTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
@@ -461,7 +490,15 @@ final class OwnershipController {
     private func cancelAutomaticAttempts() {
         cancelUSBHubClaim()
         cancelAutomaticRetry()
+        resetRetryTracking()
+    }
+
+    private func resetRetryTracking() {
         automaticRetryCount = 0
+        automaticClaimCycleStartedAtNanoseconds = nil
+        lastAutomaticClaimStartedAtNanoseconds = nil
+        automaticClaimSlowRetryCount = 0
+        automaticReleaseRetryCount = 0
     }
 
     private func resetAutomaticAttempts() {
