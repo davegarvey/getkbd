@@ -100,7 +100,9 @@ struct MenuStatus: Equatable {
         }
 
         if snapshot.isRetryingClaim {
-            return MenuStatus(title: "Keyboard isn’t responding", action: .tryNow)
+            // This Mac cannot tell why the keyboard does not answer, so name the step that
+            // helps in most cases rather than a cause.
+            return MenuStatus(title: "Keyboard isn’t answering. Switch it off and on, then choose Try Now.", action: .tryNow)
         }
 
         switch snapshot.keyboardState {
