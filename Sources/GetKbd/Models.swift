@@ -102,34 +102,45 @@ struct USBHubDescriptor: Codable, Equatable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// One way the monitor is connected to this Mac. macOS gives a monitor a different
+/// display identity for each cable or input it is connected through, and each input
+/// can expose its own USB hubs and input numbers.
+struct MonitorConnection: Codable, Equatable, Sendable {
+    let displayIdentifier: String
+    var usbHubs: [USBHubDescriptor]
+    var inputs: LearnedMonitorInputs?
+
+    init(displayIdentifier: String, usbHubs: [USBHubDescriptor] = [], inputs: LearnedMonitorInputs? = nil) {
+        self.displayIdentifier = displayIdentifier
+        self.usbHubs = usbHubs
+        self.inputs = inputs
+    }
+}
+
 struct AppSettings: Codable, Equatable, Sendable {
     var selectedKeyboard: KeyboardDescriptor?
     var selectedDisplay: DisplayDescriptor?
-    var selectedUSBHubs: [USBHubDescriptor]
+    var monitorConnections: [MonitorConnection]
     var switchMainDisplay: Bool
     var launchAtLogin: Bool
-    var monitorInputs: LearnedMonitorInputs?
 
     init(
         selectedKeyboard: KeyboardDescriptor?,
         selectedDisplay: DisplayDescriptor?,
-        selectedUSBHubs: [USBHubDescriptor],
+        monitorConnections: [MonitorConnection] = [],
         switchMainDisplay: Bool,
-        launchAtLogin: Bool,
-        monitorInputs: LearnedMonitorInputs? = nil
+        launchAtLogin: Bool
     ) {
         self.selectedKeyboard = selectedKeyboard
         self.selectedDisplay = selectedDisplay
-        self.selectedUSBHubs = selectedUSBHubs
+        self.monitorConnections = monitorConnections
         self.switchMainDisplay = switchMainDisplay
         self.launchAtLogin = launchAtLogin
-        self.monitorInputs = monitorInputs
     }
 
     static let initial = AppSettings(
         selectedKeyboard: nil,
         selectedDisplay: nil,
-        selectedUSBHubs: [],
         switchMainDisplay: true,
         launchAtLogin: true
     )
@@ -140,41 +151,92 @@ struct AppSettings: Codable, Equatable, Sendable {
             selectedUSBHubs.isEmpty
     }
 
-    /// Learned inputs for the selected display, ignoring any learned for another display.
-    var currentMonitorInputs: LearnedMonitorInputs? {
-        guard let monitorInputs,
-              monitorInputs.displayIdentifier == selectedDisplay?.identifier else {
-            return nil
-        }
-        return monitorInputs
+    /// The hubs of every connection. Hubs of other connections are unreachable through
+    /// the current cable, so any of them being present means the monitor shows this Mac.
+    var selectedUSBHubs: [USBHubDescriptor] {
+        var seen = Set<String>()
+        return monitorConnections
+            .flatMap(\.usbHubs)
+            .filter { seen.insert($0.identifier).inserted }
     }
 
     var selectedUSBHubIdentifiers: Set<String> {
         Set(selectedUSBHubs.map(\.identifier))
     }
 
+    var monitorIdentity: MonitorIdentity? {
+        guard let selectedDisplay else { return nil }
+        return MonitorIdentity(
+            name: selectedDisplay.name,
+            knownIdentifiers: Set(monitorConnections.map(\.displayIdentifier))
+                .union([selectedDisplay.identifier])
+        )
+    }
+
+    func connection(for displayIdentifier: String?) -> MonitorConnection? {
+        monitorConnections.first { $0.displayIdentifier == displayIdentifier }
+    }
+
+    /// Learned inputs for a connection of the selected display.
+    func monitorInputs(for displayIdentifier: String?) -> LearnedMonitorInputs? {
+        guard let inputs = connection(for: displayIdentifier)?.inputs,
+              inputs.displayIdentifier == displayIdentifier else {
+            return nil
+        }
+        return inputs
+    }
+
+    mutating func addConnection(displayIdentifier: String) {
+        guard connection(for: displayIdentifier) == nil else { return }
+        monitorConnections.append(MonitorConnection(displayIdentifier: displayIdentifier))
+    }
+
+    mutating func setUSBHubs(_ hubs: [USBHubDescriptor], for displayIdentifier: String) {
+        updateConnection(displayIdentifier) { $0.usbHubs = hubs }
+    }
+
+    mutating func setMonitorInputs(_ inputs: LearnedMonitorInputs) {
+        updateConnection(inputs.displayIdentifier) { $0.inputs = inputs }
+    }
+
+    private mutating func updateConnection(_ displayIdentifier: String, _ update: (inout MonitorConnection) -> Void) {
+        addConnection(displayIdentifier: displayIdentifier)
+        guard let index = monitorConnections.firstIndex(where: { $0.displayIdentifier == displayIdentifier }) else { return }
+        update(&monitorConnections[index])
+    }
+
     private enum CodingKeys: String, CodingKey {
         case selectedKeyboard
         case selectedDisplay
-        case selectedUSBHubs
-        // Written alongside the group so that earlier builds keep a working selection.
+        case monitorConnections
+        // Written alongside the connections so that earlier builds keep a working selection.
+        case legacySelectedUSBHubs = "selectedUSBHubs"
         case legacySelectedUSBHub = "selectedUSBHub"
+        case legacyMonitorInputs = "monitorInputs"
         case switchMainDisplay
         case launchAtLogin
-        case monitorInputs
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let hubs = try container.decodeIfPresent([USBHubDescriptor].self, forKey: .selectedUSBHubs)
-        let legacyHub = try container.decodeIfPresent(USBHubDescriptor.self, forKey: .legacySelectedUSBHub)
+        let selectedDisplay = try container.decodeIfPresent(DisplayDescriptor.self, forKey: .selectedDisplay)
+        var connections = try container.decodeIfPresent([MonitorConnection].self, forKey: .monitorConnections)
+        if connections == nil, let selectedDisplay {
+            let hubs = try container.decodeIfPresent([USBHubDescriptor].self, forKey: .legacySelectedUSBHubs)
+            let legacyHub = try container.decodeIfPresent(USBHubDescriptor.self, forKey: .legacySelectedUSBHub)
+            let inputs = try? container.decodeIfPresent(LearnedMonitorInputs.self, forKey: .legacyMonitorInputs)
+            connections = [MonitorConnection(
+                displayIdentifier: selectedDisplay.identifier,
+                usbHubs: hubs ?? legacyHub.map { [$0] } ?? [],
+                inputs: inputs?.displayIdentifier == selectedDisplay.identifier ? inputs : nil
+            )]
+        }
         self.init(
             selectedKeyboard: try container.decodeIfPresent(KeyboardDescriptor.self, forKey: .selectedKeyboard),
-            selectedDisplay: try container.decodeIfPresent(DisplayDescriptor.self, forKey: .selectedDisplay),
-            selectedUSBHubs: hubs ?? legacyHub.map { [$0] } ?? [],
+            selectedDisplay: selectedDisplay,
+            monitorConnections: connections ?? [],
             switchMainDisplay: try container.decodeIfPresent(Bool.self, forKey: .switchMainDisplay) ?? true,
-            launchAtLogin: try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? true,
-            monitorInputs: try? container.decodeIfPresent(LearnedMonitorInputs.self, forKey: .monitorInputs)
+            launchAtLogin: try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? true
         )
     }
 
@@ -182,11 +244,29 @@ struct AppSettings: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(selectedKeyboard, forKey: .selectedKeyboard)
         try container.encodeIfPresent(selectedDisplay, forKey: .selectedDisplay)
-        try container.encode(selectedUSBHubs, forKey: .selectedUSBHubs)
+        try container.encode(monitorConnections, forKey: .monitorConnections)
+        try container.encode(selectedUSBHubs, forKey: .legacySelectedUSBHubs)
         try container.encodeIfPresent(selectedUSBHubs.first, forKey: .legacySelectedUSBHub)
+        try container.encodeIfPresent(monitorInputs(for: selectedDisplay?.identifier), forKey: .legacyMonitorInputs)
         try container.encode(switchMainDisplay, forKey: .switchMainDisplay)
         try container.encode(launchAtLogin, forKey: .launchAtLogin)
-        try container.encodeIfPresent(monitorInputs, forKey: .monitorInputs)
+    }
+}
+
+/// The selected monitor and the display identities it has been seen with.
+struct MonitorIdentity: Equatable, Sendable {
+    let name: String
+    let knownIdentifiers: Set<String>
+
+    /// The online identifier of the monitor: a known identity, or otherwise the only
+    /// external display with the monitor's name, which is a new connection of it.
+    func identifier(among displays: [DisplayDescriptor]) -> String? {
+        let external = displays.filter { !$0.isBuiltIn }
+        if let known = external.first(where: { knownIdentifiers.contains($0.identifier) }) {
+            return known.identifier
+        }
+        let named = external.filter { $0.name == name }
+        return named.count == 1 ? named[0].identifier : nil
     }
 }
 

@@ -23,10 +23,10 @@ final class AppSettingsTests: XCTestCase {
 
     func testRoundTripKeepsGroupAndWritesLegacyHub() throws {
         var settings = AppSettings.initial
-        settings.selectedUSBHubs = [
+        settings.setUSBHubs([
             USBHubDescriptor(identifier: "hub-a", name: "A", manufacturer: "", vendorID: 1, productID: 2),
             USBHubDescriptor(identifier: "hub-b", name: "B", manufacturer: "", vendorID: 1, productID: 3)
-        ]
+        ], for: "display")
         settings.switchMainDisplay = false
 
         let data = try JSONEncoder().encode(settings)

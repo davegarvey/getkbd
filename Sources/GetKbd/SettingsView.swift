@@ -77,9 +77,18 @@ final class SettingsViewModel: ObservableObject {
     }
 
     var monitorNote: String? {
-        guard let selected = settings.selectedDisplay else { return nil }
-        let online = DisplayMonitor.currentDisplays().contains { $0.identifier == selected.identifier }
-        return online ? nil : "Not connected"
+        guard settings.selectedDisplay != nil else { return nil }
+        return currentDisplayIdentifier == nil ? "Not connected" : nil
+    }
+
+    /// The monitor is online through a connection whose hubs have not been learned.
+    var currentConnectionNeedsSwitch: Bool {
+        guard let currentDisplayIdentifier else { return false }
+        return settings.connection(for: currentDisplayIdentifier)?.usbHubs.isEmpty ?? true
+    }
+
+    private var currentDisplayIdentifier: String? {
+        settings.monitorIdentity?.identifier(among: DisplayMonitor.currentDisplays())
     }
 
     func reload() {
@@ -132,7 +141,8 @@ final class SettingsViewModel: ObservableObject {
     }
 
     func selectDisplay(identifier: String) {
-        guard let descriptor = displayOptions.first(where: { $0.identifier == identifier }) else { return }
+        guard identifier != settings.selectedDisplay?.identifier,
+              let descriptor = displayOptions.first(where: { $0.identifier == identifier }) else { return }
         var newSettings = settingsStore.value
         newSettings.selectedDisplay = descriptor
         commit(newSettings)
@@ -195,7 +205,11 @@ final class SettingsViewModel: ObservableObject {
             self.identification = nil
             let wasIncomplete = settingsStore.value.needsOnboarding
             var newSettings = settingsStore.value
-            newSettings.selectedUSBHubs = hubs
+            guard let displayIdentifier = currentDisplayIdentifier ?? newSettings.selectedDisplay?.identifier else {
+                identificationFailed = true
+                return
+            }
+            newSettings.setUSBHubs(hubs, for: displayIdentifier)
             commit(newSettings)
             if wasIncomplete, !settings.needsOnboarding {
                 completedSetupThisSession = true
@@ -225,8 +239,10 @@ final class SettingsViewModel: ObservableObject {
             selectDisplay(identifier: displays[0].identifier)
             return
         }
-        if let selected = settings.selectedDisplay,
-           !displays.contains(where: { $0.identifier == selected.identifier }) {
+        // The selected monitor appears once, whichever of its connections is online.
+        if let selected = settings.selectedDisplay {
+            let online = settings.monitorIdentity?.identifier(among: displays)
+            displays.removeAll { $0.identifier == online }
             displays.insert(selected, at: 0)
         }
         displayOptions = displays
@@ -407,8 +423,13 @@ private struct MonitorSwitchingRow: View {
         } else {
             LabeledContent("Monitor switching") {
                 HStack(spacing: 8) {
-                    Label("Set up", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                    if viewModel.currentConnectionNeedsSwitch {
+                        Text("Switch to your other Mac and back")
+                            .foregroundStyle(.orange)
+                    } else {
+                        Label("Set up", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
                     Button("Set Up Again…") {
                         viewModel.startIdentification()
                     }

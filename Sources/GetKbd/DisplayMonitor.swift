@@ -10,6 +10,7 @@ struct DisplayPrimarySnapshot: Equatable, Sendable {
     let originX: Int32?
     let originY: Int32?
     let isMirrored: Bool
+    var name: String? = nil
 }
 
 struct DisplayOrigin: Equatable, Sendable {
@@ -100,7 +101,7 @@ protocol DisplayMonitoring: AnyObject {
 
 @MainActor
 final class DisplayMonitor: DisplayMonitoring {
-    var configuredDisplayIdentifier: String? {
+    var configuredMonitor: MonitorIdentity? {
         didSet {
             scheduleEvaluation()
         }
@@ -108,8 +109,12 @@ final class DisplayMonitor: DisplayMonitoring {
 
     var debounceInterval: TimeInterval
     var onChange: ((Bool) -> Void)?
+    /// Called when the monitor's online identity changes, including to nil.
+    var onIdentifierChange: ((String?) -> Void)?
 
     private(set) var isPresent = false
+    /// The online identity of the configured monitor, which differs per cable or input.
+    private(set) var currentDisplayIdentifier: String?
 
     private let primaryDisplaySystem: DisplayPrimarySystem
     private var screenObserver: NSObjectProtocol?
@@ -126,11 +131,11 @@ final class DisplayMonitor: DisplayMonitoring {
     private var primarySyncRequested = false
 
     init(
-        configuredDisplayIdentifier: String?,
+        configuredMonitor: MonitorIdentity?,
         debounceInterval: TimeInterval = 1.5,
         primaryDisplaySystem: DisplayPrimarySystem? = nil
     ) {
-        self.configuredDisplayIdentifier = configuredDisplayIdentifier
+        self.configuredMonitor = configuredMonitor
         self.debounceInterval = debounceInterval
         self.primaryDisplaySystem = primaryDisplaySystem ?? CoreGraphicsDisplayPrimarySystem()
     }
@@ -217,15 +222,18 @@ final class DisplayMonitor: DisplayMonitoring {
         }
     }
 
-    static func currentDisplays() -> [DisplayDescriptor] {
-        let names = Dictionary(
+    static func screenNames() -> [CGDirectDisplayID: String] {
+        Dictionary(
             NSScreen.screens.compactMap { screen -> (CGDirectDisplayID, String)? in
                 guard let displayID = displayID(for: screen) else { return nil }
                 return (displayID, screen.localizedName)
             },
             uniquingKeysWith: { first, _ in first }
         )
+    }
 
+    static func currentDisplays() -> [DisplayDescriptor] {
+        let names = screenNames()
         return currentOnlineDisplayIDs().compactMap { displayID in
             guard CGDisplayIsBuiltin(displayID) == 0 else { return nil }
             return DisplayDescriptor(
@@ -248,17 +256,24 @@ final class DisplayMonitor: DisplayMonitoring {
         let mainDisplayIdentifier = primaryDisplaySystem.mainDisplayIdentifier()
         let mainDisplayChanged = mainDisplayIdentifier != lastMainDisplayIdentifier
         lastMainDisplayIdentifier = mainDisplayIdentifier
-        let newValue = configuredDisplayID() != nil
+        let identifier = monitorIdentifier(in: displays)
+        let identifierChanged = identifier != currentDisplayIdentifier
+        currentDisplayIdentifier = identifier
+        let newValue = identifier != nil
         let displayPresenceChanged = newValue != isPresent
+
+        if identifierChanged, notify {
+            GetKbdLog.event("monitor.identity", identifier ?? "none")
+            onIdentifierChange?(identifier)
+        }
 
         if displayPresenceChanged {
             isPresent = newValue
 
             if notify {
-                let configured = configuredDisplayIdentifier ?? "none"
                 GetKbdLog.event(
                     newValue ? "monitor.connected" : "monitor.disconnected",
-                    "configured=\(configured)"
+                    "identity=\(identifier ?? "none")"
                 )
                 onChange?(newValue)
             }
@@ -274,7 +289,7 @@ final class DisplayMonitor: DisplayMonitoring {
               !primaryIsSleeping,
               !primaryScreensAreSleeping,
               primaryHubConfigured,
-              let configuredDisplayIdentifier else {
+              configuredMonitor != nil else {
             return
         }
 
@@ -285,8 +300,9 @@ final class DisplayMonitor: DisplayMonitoring {
 
         let displays = primaryDisplaySystem.snapshots()
         guard !displays.contains(where: { $0.isMirrored }),
+              let currentDisplayIdentifier = monitorIdentifier(in: displays),
               let targetIdentifier = DisplayPrimaryPlanner.targetIdentifier(
-                  configuredDisplayIdentifier: configuredDisplayIdentifier,
+                  configuredDisplayIdentifier: currentDisplayIdentifier,
                   hubConfigured: primaryHubConfigured,
                   hubPresent: primaryHubPresent,
                   isSleeping: primaryIsSleeping,
@@ -332,15 +348,10 @@ final class DisplayMonitor: DisplayMonitoring {
         }
     }
 
-    private func configuredDisplayID() -> CGDirectDisplayID? {
-        configuredDisplayID(in: Self.currentOnlineDisplayIDs())
-    }
-
-    private func configuredDisplayID(in displayIDs: [CGDirectDisplayID]) -> CGDirectDisplayID? {
-        guard let configuredDisplayIdentifier else { return nil }
-        return displayIDs.first {
-            Self.identifier(for: $0) == configuredDisplayIdentifier
-        }
+    private func monitorIdentifier(in displays: [DisplayPrimarySnapshot]) -> String? {
+        configuredMonitor?.identifier(among: displays.map {
+            DisplayDescriptor(identifier: $0.identifier, name: $0.name ?? "", isBuiltIn: $0.isBuiltIn)
+        })
     }
 
     nonisolated static func currentOnlineDisplayIDs() -> [CGDirectDisplayID] {
@@ -387,7 +398,8 @@ final class DisplayMonitor: DisplayMonitoring {
 @MainActor
 private final class CoreGraphicsDisplayPrimarySystem: DisplayPrimarySystem {
     func snapshots() -> [DisplayPrimarySnapshot] {
-        DisplayMonitor.currentOnlineDisplayIDs().map { displayID in
+        let names = DisplayMonitor.screenNames()
+        return DisplayMonitor.currentOnlineDisplayIDs().map { displayID in
             let isActive = CGDisplayIsActive(displayID) != 0
             let bounds = CGDisplayBounds(displayID)
             return DisplayPrimarySnapshot(
@@ -397,7 +409,8 @@ private final class CoreGraphicsDisplayPrimarySystem: DisplayPrimarySystem {
                 isActive: isActive,
                 originX: isActive ? Int32(bounds.origin.x.rounded()) : nil,
                 originY: isActive ? Int32(bounds.origin.y.rounded()) : nil,
-                isMirrored: CGDisplayIsInMirrorSet(displayID) != 0
+                isMirrored: CGDisplayIsInMirrorSet(displayID) != 0,
+                name: names[displayID]
             )
         }
     }

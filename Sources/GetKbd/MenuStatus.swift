@@ -38,12 +38,22 @@ struct MenuStatus: Equatable {
         settings: AppSettings,
         snapshot: OwnershipSnapshot,
         desiredState: DesiredKeyboardState?,
+        currentDisplayIdentifier: String? = nil,
         monitorControlAvailable: Bool = false,
         bluetoothActivation: BluetoothActivationState = .idle
     ) -> MenuStatus {
-        var status = keyboardStatus(settings: settings, snapshot: snapshot, desiredState: desiredState, bluetoothActivation: bluetoothActivation)
+        // Without a recognised identity, the selected display's own connection applies.
+        let connection = settings.connection(for: currentDisplayIdentifier ?? settings.selectedDisplay?.identifier)
+        var status = keyboardStatus(
+            settings: settings,
+            snapshot: snapshot,
+            desiredState: desiredState,
+            connectionNeedsSwitch: connection?.usbHubs.isEmpty ?? false,
+            bluetoothActivation: bluetoothActivation
+        )
         status.monitorAction = monitorAction(
             settings: settings,
+            inputs: connection?.usbHubs.isEmpty == false ? connection?.inputs : nil,
             snapshot: snapshot,
             monitorControlAvailable: monitorControlAvailable
         )
@@ -52,6 +62,7 @@ struct MenuStatus: Equatable {
 
     private static func monitorAction(
         settings: AppSettings,
+        inputs: LearnedMonitorInputs?,
         snapshot: OwnershipSnapshot,
         monitorControlAvailable: Bool
     ) -> MonitorAction? {
@@ -61,7 +72,7 @@ struct MenuStatus: Equatable {
               snapshot.keyboardState != .connecting,
               snapshot.keyboardState != .disconnecting,
               snapshot.monitorPresent,
-              let inputs = settings.currentMonitorInputs else {
+              let inputs else {
             return nil
         }
 
@@ -75,6 +86,7 @@ struct MenuStatus: Equatable {
         settings: AppSettings,
         snapshot: OwnershipSnapshot,
         desiredState: DesiredKeyboardState?,
+        connectionNeedsSwitch: Bool,
         bluetoothActivation: BluetoothActivationState
     ) -> MenuStatus {
         if snapshot.bluetoothAvailability != .poweredOn {
@@ -125,6 +137,10 @@ struct MenuStatus: Equatable {
 
         if !snapshot.monitorPresent {
             return MenuStatus(title: "Monitor not connected", action: .get)
+        }
+
+        if connectionNeedsSwitch {
+            return MenuStatus(title: "Switch the monitor to your other Mac and back", action: .get)
         }
 
         if snapshot.usbHubPresent {

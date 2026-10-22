@@ -117,7 +117,7 @@ final class MenuStatusTests: XCTestCase {
 
     private func settingsWithInputs(thisMac: Int?, otherMac: Int?) -> AppSettings {
         var settings = configuredSettings
-        settings.monitorInputs = LearnedMonitorInputs(displayIdentifier: "display", thisMac: thisMac, otherMac: otherMac)
+        settings.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display", thisMac: thisMac, otherMac: otherMac))
         return settings
     }
 
@@ -129,9 +129,9 @@ final class MenuStatusTests: XCTestCase {
         var settings = AppSettings.initial
         settings.selectedKeyboard = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
         settings.selectedDisplay = DisplayDescriptor(identifier: "display", name: "Display", isBuiltIn: false)
-        settings.selectedUSBHubs = [
+        settings.setUSBHubs([
             USBHubDescriptor(identifier: "hub", name: "Hub", manufacturer: "", vendorID: 1, productID: 2)
-        ]
+        ], for: "display")
         return settings
     }
 
