@@ -59,11 +59,10 @@ struct MenuStatus: Equatable {
         snapshot: OwnershipSnapshot,
         monitorControlAvailable: Bool
     ) -> MonitorAction? {
+        // Keyboard operations do not hide the action: switching does not depend on
+        // Bluetooth, and a hub change during a claim is reconciled once it finishes.
         guard monitorControlAvailable,
               !settings.needsOnboarding,
-              !snapshot.isBusy,
-              snapshot.keyboardState != .connecting,
-              snapshot.keyboardState != .disconnecting,
               snapshot.monitorPresent,
               let inputs else {
             return nil

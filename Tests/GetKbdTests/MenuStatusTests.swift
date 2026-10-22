@@ -97,7 +97,7 @@ final class MenuStatusTests: XCTestCase {
         XCTAssertEqual(status, MenuStatus(title: "Monitor is showing your other Mac", action: nil, monitorAction: .switchToThisMac))
     }
 
-    func testNoMonitorActionWhenUnavailableUnknownOfflineOrBusy() {
+    func testNoMonitorActionWhenUnavailableUnknownOrOffline() {
         let settings = settingsWithInputs(thisMac: 19, otherMac: nil)
         XCTAssertNil(MenuStatus.make(
             settings: settings, snapshot: snapshot(usbHub: false), desiredState: nil, monitorControlAvailable: false
@@ -109,10 +109,10 @@ final class MenuStatusTests: XCTestCase {
             settings: settings, snapshot: snapshot(monitor: false, usbHub: false), desiredState: nil,
             monitorControlAvailable: true
         ).monitorAction)
-        XCTAssertNil(MenuStatus.make(
+        XCTAssertEqual(MenuStatus.make(
             settings: settings, snapshot: snapshot(keyboard: .connecting, usbHub: false), desiredState: nil,
             monitorControlAvailable: true
-        ).monitorAction)
+        ).monitorAction, .switchToThisMac)
     }
 
     private func settingsWithInputs(thisMac: Int?, otherMac: Int?) -> AppSettings {

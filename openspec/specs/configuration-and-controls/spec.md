@@ -288,21 +288,25 @@ to reflect the keyboard state.
 
 #### Scenario: Monitor can be switched to the other Mac
 
-- **WHEN** setup is complete, no operation is in progress, a hub in the group is
-  present, the monitor's input control is available, and the other Mac's input
+- **WHEN** setup is complete, a hub in the group is present, the monitor's input control is available, and the other Mac's input
   is known
 - **THEN** the menu SHALL offer Switch Monitor to Other Mac
 
 #### Scenario: Monitor can be switched to this Mac
 
-- **WHEN** setup is complete, no operation is in progress, the selected display
-  is online, no hub in the group is present, the monitor's input control is
+- **WHEN** setup is complete, the selected display is online, no hub in the group is present, the monitor's input control is
   available, and this Mac's input is known
 - **THEN** the menu SHALL offer Switch Monitor to This Mac
 
 #### Scenario: Monitor cannot be switched
 
 - **WHEN** the monitor's input control is unavailable, the needed input is not
-  known, the selected display is offline, setup is incomplete, or an operation
-  is in progress
+  known, the selected display is offline, or setup is incomplete
 - **THEN** the menu SHALL offer no monitor action
+
+#### Scenario: Keyboard operation is in progress
+
+- **WHEN** a keyboard claim or release is in progress or awaiting retry and the
+  conditions for a monitor action are met
+- **THEN** the menu SHALL still offer that monitor action, and a resulting change
+  in the hub group SHALL be reconciled after the keyboard operation finishes

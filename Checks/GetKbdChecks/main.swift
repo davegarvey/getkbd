@@ -416,6 +416,17 @@ struct GetKbdChecks {
         check(monitorAction(hub: true) == .switchToOtherMac, "active Mac offers switch to other Mac")
         check(monitorAction(hub: false) == .switchToThisMac, "inactive Mac offers switch to this Mac")
         check(monitorAction(hub: false, available: false) == nil, "unavailable monitor control hides the action")
+        for (state, busy) in [(KeyboardConnectionState.connecting, true), (.disconnecting, true), (.failed, false)] {
+            let action = MenuStatus.make(
+                settings: withInputs,
+                snapshot: OwnershipSnapshot(keyboardState: state, ownershipReason: .usbHub, monitorPresent: true,
+                                            usbHubPresent: true, isBusy: busy, errorMessage: nil,
+                                            isRetryingClaim: !busy),
+                desiredState: .connected,
+                monitorControlAvailable: true
+            ).monitorAction
+            check(action == .switchToOtherMac, "keyboard activity (\(state)) does not hide the monitor switch")
+        }
 
         var swappedCables = withInputs
         swappedCables.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-2", thisMac: 21, otherMac: nil))
