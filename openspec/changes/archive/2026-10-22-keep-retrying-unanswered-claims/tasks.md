@@ -6,4 +6,4 @@
 ## 2. Verification
 
 - [ ] 2.1 Add checks for persistent retries, for stopping when the claim stops being eligible, and for the menu title
-- [ ] 2.2 Install on this Mac and confirm a normal hand-over
+- [x] 2.2 Install on this Mac and confirm a normal hand-over

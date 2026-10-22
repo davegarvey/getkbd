@@ -264,8 +264,10 @@ to reflect the keyboard state.
 
 - **WHEN** an automatic claim has failed and getkbd is either waiting to retry it
   or retrying it
-- **THEN** the menu SHALL state that the keyboard is not responding and SHALL
-  offer Try Now
+- **THEN** the menu SHALL state "Keyboard isn’t answering. Switch it off and on,
+  then choose Try Now." and SHALL offer Try Now, without naming a cause, because
+  this Mac cannot tell whether the keyboard is asleep, switched off, or still
+  paired to the other Mac
 
 #### Scenario: Operation failed
 
