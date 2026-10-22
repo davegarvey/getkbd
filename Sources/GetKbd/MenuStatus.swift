@@ -87,6 +87,8 @@ struct MenuStatus: Equatable {
                 return MenuStatus(title: "Turning Bluetooth on…", action: nil)
             case .failed:
                 return MenuStatus(title: "Couldn’t turn Bluetooth on", action: .bluetoothSettings)
+            case .idle where snapshot.bluetoothAvailability == .poweredOff && snapshot.keyboardPaired:
+                return MenuStatus(title: "Bluetooth is off, so the keyboard can’t be released", action: .enableBluetooth)
             case .idle:
                 return MenuStatus(title: snapshot.bluetoothAvailability.title,
                                   action: snapshot.bluetoothAvailability == .poweredOff ? .enableBluetooth : .bluetoothSettings)

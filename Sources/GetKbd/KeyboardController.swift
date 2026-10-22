@@ -6,6 +6,8 @@ import Foundation
 protocol KeyboardControlling: AnyObject {
     var configuredKeyboard: KeyboardDescriptor? { get set }
     var state: KeyboardConnectionState { get }
+    /// Whether this Mac holds a pairing for the keyboard, even while it is disconnected.
+    var isPaired: Bool { get }
     var bluetoothAvailability: BluetoothAvailability { get }
     var onBluetoothAvailabilityChange: (() -> Void)? { get set }
     var lastError: String? { get }
@@ -18,6 +20,10 @@ protocol KeyboardControlling: AnyObject {
     /// Stops a claim that is still waiting for the keyboard to pair; `connect()` then returns false.
     func cancelConnect()
     func disconnect() async -> Bool
+}
+
+extension KeyboardControlling {
+    var isPaired: Bool { state == .connectedLocal }
 }
 
 private final class ContinuationGate<Value: Sendable>: @unchecked Sendable {
@@ -91,6 +97,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     var state: KeyboardConnectionState { stateValue }
+    private(set) var isPaired = false
     private(set) var lastError: String?
     var onStateChange: ((KeyboardConnectionState) -> Void)?
 
@@ -152,12 +159,13 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     private func refreshConnectionState() {
+        let device = configuredKeyboard.flatMap { Self.device(identifier: $0.identifier) }
+        updatePairing(device?.device.isPaired() ?? false)
         guard bluetoothAvailability == .poweredOn else {
             updateState(.disconnected)
             return
         }
-        guard let identifier = configuredKeyboard?.identifier,
-              let device = Self.device(identifier: identifier) else {
+        guard let device else {
             updateState(.unknown)
             return
         }
@@ -207,6 +215,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing removal failed")
             return false
         }
+        updatePairing(false)
 
         // Magic Keyboards need a short interval after their old bond is removed before they
         // reliably accept a new pairing attempt.
@@ -235,6 +244,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
+        updatePairing(true)
         GetKbdLog.event("keyboard.pair.success")
         guard requireBluetooth() else { return false }
         let returnCode = await runBluetoothCall { box.device.openConnection() }
@@ -306,6 +316,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         }
 
         lastError = nil
+        updatePairing(false)
         updateState(.disconnected)
         GetKbdLog.event("keyboard.release.success")
         return true
@@ -372,6 +383,13 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         guard stateValue != newState else { return }
         stateValue = newState
         onStateChange?(newState)
+    }
+
+    /// A pairing change alone also notifies, so that a dormant pairing can be released.
+    private func updatePairing(_ paired: Bool) {
+        guard isPaired != paired else { return }
+        isPaired = paired
+        onStateChange?(stateValue)
     }
 
     private func fail(_ message: String) {

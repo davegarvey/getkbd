@@ -39,6 +39,7 @@ struct GetKbdChecks {
         await checkConnectionRecognition()
         await checkMonitorInputLearner()
         await checkClaimRetries()
+        await checkDormantPairingRelease()
         await checkScreenWakeRecovery()
         await checkScreenNotificationRouting()
 
@@ -212,6 +213,17 @@ struct GetKbdChecks {
                   "Bluetooth availability overrides retry")
             check(status.monitorAction == .switchToOtherMac, "Bluetooth off preserves monitor switching")
         }
+        for paired in [false, true] {
+            let snapshot = OwnershipSnapshot(keyboardState: .disconnected, ownershipReason: .none,
+                                             monitorPresent: true, usbHubPresent: false, isBusy: false,
+                                             errorMessage: nil, bluetoothAvailability: .poweredOff,
+                                             keyboardPaired: paired)
+            let status = MenuStatus.make(settings: settings, snapshot: snapshot, desiredState: .disconnected)
+            check(status.title == (paired ? "Bluetooth is off, so the keyboard can’t be released" : "Bluetooth is off") &&
+                  status.action == .enableBluetooth,
+                  "Bluetooth off names a keyboard that is still paired here")
+        }
+
         let keyboard = CheckKeyboardController()
         keyboard.bluetoothAvailability = .poweredOff
         let ownership = OwnershipController(keyboard: keyboard)
@@ -447,6 +459,36 @@ struct GetKbdChecks {
     }
 
     @MainActor
+    private static func checkDormantPairingRelease() async {
+        let keyboard = CheckKeyboardController()
+        keyboard.paired = true
+        keyboard.bluetoothAvailability = .poweredOff
+        let ownership = OwnershipController(keyboard: keyboard)
+        ownership.start(monitorPresent: true, usbHubPresent: false)
+        await ownership.waitForIdle()
+        check(keyboard.releases == 0, "nothing is released while Bluetooth is off")
+        keyboard.setAvailability(.poweredOn)
+        await ownership.waitForIdle()
+        check(keyboard.releases == 1 && !keyboard.paired,
+              "a pairing left while Bluetooth was off is released when it comes back")
+
+        let idle = CheckKeyboardController()
+        idle.paired = true
+        let away = OwnershipController(keyboard: idle)
+        away.start(monitorPresent: false)
+        await away.waitForIdle()
+        check(idle.releases == 1 && !idle.paired, "a paired but disconnected keyboard is released")
+
+        let owned = CheckKeyboardController()
+        owned.paired = true
+        let here = OwnershipController(keyboard: owned)
+        here.start(monitorPresent: true, usbHubPresent: true)
+        await here.waitForIdle()
+        check(owned.releases == 0 && owned.state == .connectedLocal,
+              "a paired keyboard is kept while the monitor shows this Mac")
+    }
+
+    @MainActor
     private static func checkClaimRetries() async {
         final class Keyboard: KeyboardControlling {
             var configuredKeyboard: KeyboardDescriptor? = KeyboardDescriptor(identifier: "k", name: "Keyboard")
@@ -617,6 +659,8 @@ private final class CheckKeyboardController: KeyboardControlling {
     var onBluetoothAvailabilityChange: (() -> Void)?
     var claims = 0
     var releases = 0
+    var paired = false
+    var isPaired: Bool { paired || state == .connectedLocal }
     var blockNextClaim = false
     var blockedClaim: CheckedContinuation<Bool, Never>?
 
@@ -637,6 +681,7 @@ private final class CheckKeyboardController: KeyboardControlling {
             blockNextClaim = false
             success = await withCheckedContinuation { blockedClaim = $0 }
         }
+        paired = success
         state = success ? .connectedLocal : .failed
         onStateChange?(state)
         return success
@@ -647,6 +692,7 @@ private final class CheckKeyboardController: KeyboardControlling {
     }
     func disconnect() async -> Bool {
         releases += 1
+        paired = false
         state = .disconnected
         onStateChange?(state)
         return true

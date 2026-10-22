@@ -218,7 +218,7 @@ final class OwnershipController {
         reconfigurationReleaseAttempted = false
         cancelAutomaticAttempts()
 
-        if !operationInProgress, keyboard.state == .connectedLocal {
+        if !operationInProgress, keyboard.state == .connectedLocal || keyboard.isPaired {
             desiredState = .disconnected
             ownershipReason = .none
             failedDesiredState = nil
@@ -288,7 +288,7 @@ final class OwnershipController {
 
         case .disconnected:
             cancelUSBHubClaim()
-            guard keyboard.state == .connectedLocal else { return }
+            guard keyboard.state == .connectedLocal || keyboard.isPaired else { return }
             guard force || failedDesiredState != .disconnected else { return }
             beginOperation(for: .disconnected)
         }
@@ -334,7 +334,7 @@ final class OwnershipController {
         operationTarget = nil
 
         if hasPendingKeyboardConfiguration {
-            if keyboard.state == .connectedLocal {
+            if keyboard.state == .connectedLocal || keyboard.isPaired {
                 guard !reconfigurationReleaseAttempted else {
                     failReconfiguration("Unable to release the previous keyboard; the selection was not changed.")
                     return
@@ -533,7 +533,8 @@ final class OwnershipController {
             isBusy: operationInProgress,
             errorMessage: lastError,
             bluetoothAvailability: keyboard.bluetoothAvailability,
-            isRetryingClaim: isRetryingClaim
+            isRetryingClaim: isRetryingClaim,
+            keyboardPaired: keyboard.isPaired
         )
         onChange?(snapshot)
     }

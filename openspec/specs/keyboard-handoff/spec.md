@@ -59,6 +59,21 @@ present locally.
 - **THEN** getkbd SHALL request release of the selected keyboard regardless of any
   manual preference and SHALL leave display configuration unchanged
 
+#### Scenario: Keyboard is paired but not connected
+
+- **WHEN** release is required and the selected keyboard is paired to this Mac
+  but not connected, for example because Bluetooth was off or the keyboard is
+  asleep
+- **THEN** getkbd SHALL remove this Mac's pairing as it would for a connected
+  keyboard
+
+#### Scenario: Bluetooth comes back on
+
+- **WHEN** Bluetooth becomes available, release is required, and the selected
+  keyboard is still paired to this Mac
+- **THEN** getkbd SHALL remove the pairing without waiting for another signal
+  change
+
 #### Scenario: Both Macs see the selected hub
 
 - **WHEN** a hub in the group is simultaneously visible to both Macs
@@ -298,13 +313,13 @@ the display state settles, even if the active display set and hub signal are unc
 
 ### Requirement: Change keyboard selection without orphaning the old device
 
-The system SHALL release the currently connected selected keyboard before applying
-a different keyboard selection.
+The system SHALL release the currently selected keyboard before applying a
+different keyboard selection when that keyboard is connected or paired locally.
 
 #### Scenario: Previous keyboard releases successfully
 
 - **WHEN** the selected keyboard is changed while the previous keyboard is
-  connected locally
+  connected or paired locally
 - **THEN** getkbd SHALL release the previous keyboard, apply the new selection,
   and evaluate the current local KVM conditions for the new keyboard
 
