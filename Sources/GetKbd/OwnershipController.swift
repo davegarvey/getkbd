@@ -533,7 +533,8 @@ final class OwnershipController {
             isBusy: operationInProgress,
             errorMessage: lastError,
             bluetoothAvailability: keyboard.bluetoothAvailability,
-            isRetryingClaim: isRetryingClaim
+            isRetryingClaim: isRetryingClaim,
+            keyboardPaired: keyboard.isPaired
         )
         onChange?(snapshot)
     }

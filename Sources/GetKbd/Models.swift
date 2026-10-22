@@ -317,6 +317,8 @@ struct OwnershipSnapshot: Equatable, Sendable {
     let errorMessage: String?
     /// An automatic claim has failed and getkbd is waiting to retry it or retrying it.
     let isRetryingClaim: Bool
+    /// This Mac holds a pairing for the keyboard, connected or not.
+    let keyboardPaired: Bool
 
     init(
         keyboardState: KeyboardConnectionState,
@@ -326,10 +328,12 @@ struct OwnershipSnapshot: Equatable, Sendable {
         isBusy: Bool,
         errorMessage: String?,
         bluetoothAvailability: BluetoothAvailability = .poweredOn,
-        isRetryingClaim: Bool = false
+        isRetryingClaim: Bool = false,
+        keyboardPaired: Bool = false
     ) {
         self.bluetoothAvailability = bluetoothAvailability
         self.isRetryingClaim = isRetryingClaim
+        self.keyboardPaired = keyboardPaired
         self.keyboardState = keyboardState
         self.ownershipReason = ownershipReason
         self.monitorPresent = monitorPresent

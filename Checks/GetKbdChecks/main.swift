@@ -213,6 +213,17 @@ struct GetKbdChecks {
                   "Bluetooth availability overrides retry")
             check(status.monitorAction == .switchToOtherMac, "Bluetooth off preserves monitor switching")
         }
+        for paired in [false, true] {
+            let snapshot = OwnershipSnapshot(keyboardState: .disconnected, ownershipReason: .none,
+                                             monitorPresent: true, usbHubPresent: false, isBusy: false,
+                                             errorMessage: nil, bluetoothAvailability: .poweredOff,
+                                             keyboardPaired: paired)
+            let status = MenuStatus.make(settings: settings, snapshot: snapshot, desiredState: .disconnected)
+            check(status.title == (paired ? "Bluetooth is off, so the keyboard can’t be released" : "Bluetooth is off") &&
+                  status.action == .enableBluetooth,
+                  "Bluetooth off names a keyboard that is still paired here")
+        }
+
         let keyboard = CheckKeyboardController()
         keyboard.bluetoothAvailability = .poweredOff
         let ownership = OwnershipController(keyboard: keyboard)
