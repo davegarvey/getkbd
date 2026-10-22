@@ -35,6 +35,8 @@ struct GetKbdChecks {
         checkMenuStatus(settings)
         checkHubIdentification(hub)
         checkMonitorInputs(settings)
+        checkMonitorIdentity()
+        await checkConnectionRecognition()
         await checkMonitorInputLearner()
         await checkClaimRetries()
         await checkScreenWakeRecovery()
@@ -54,7 +56,7 @@ struct GetKbdChecks {
                 ],
                 mainIdentifier: hubPresent ? "built-in" : "external"
             )
-            let monitor = DisplayMonitor(configuredDisplayIdentifier: "external", debounceInterval: 0,
+            let monitor = DisplayMonitor(configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]), debounceInterval: 0,
                                          primaryDisplaySystem: system)
             monitor.setPrimaryScreensSleeping(true)
             _ = monitor.start()
@@ -81,7 +83,7 @@ struct GetKbdChecks {
                 ],
                 mainIdentifier: "external"
             )
-            let monitor = DisplayMonitor(configuredDisplayIdentifier: "external", debounceInterval: 0,
+            let monitor = DisplayMonitor(configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]), debounceInterval: 0,
                                          primaryDisplaySystem: system)
             monitor.primarySyncEnabled = condition != "disabled"
             monitor.setPrimaryDisplaySleeping(condition == "system-sleep")
@@ -203,7 +205,7 @@ struct GetKbdChecks {
                                              isBusy: false, errorMessage: "Pairing failed",
                                              bluetoothAvailability: availability)
             var withInputs = settings
-            withInputs.monitorInputs = LearnedMonitorInputs(displayIdentifier: "display-1", thisMac: 19, otherMac: 21)
+            withInputs.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-1", thisMac: 19, otherMac: 21))
             let status = MenuStatus.make(settings: withInputs, snapshot: snapshot, desiredState: .connected,
                                          monitorControlAvailable: true)
             check(status.title == availability.title && status.action == (availability == .poweredOff ? .enableBluetooth : .bluetoothSettings),
@@ -248,7 +250,9 @@ struct GetKbdChecks {
 
     private static func checkSettingsMigration() {
         let legacy = """
-        {"selectedUSBHub": {"identifier": "hub-1", "name": "Hub", "manufacturer": "", "vendorID": 1, "productID": 2},
+        {"selectedDisplay": {"identifier": "display-1", "name": "Display", "isBuiltIn": false},
+         "selectedUSBHub": {"identifier": "hub-1", "name": "Hub", "manufacturer": "", "vendorID": 1, "productID": 2},
+         "monitorInputs": {"displayIdentifier": "display-1", "thisMac": 19, "otherMac": 21},
          "shortcut": {"keyCode": 40, "modifiers": 6400}}
         """
         let decoded = try? JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
@@ -258,6 +262,47 @@ struct GetKbdChecks {
         let encoded = decoded.flatMap { try? JSONEncoder().encode($0) }
         let roundTrip = encoded.flatMap { try? JSONDecoder().decode(AppSettings.self, from: $0) }
         check(roundTrip == decoded, "settings round-trip")
+        check(decoded?.monitorConnections.count == 1 &&
+              decoded?.monitorInputs(for: "display-1")?.otherMac == 21,
+              "legacy hubs and inputs migrate to one connection")
+
+        var swapped = decoded
+        swapped?.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-2", thisMac: 21, otherMac: 19))
+        check(swapped?.monitorInputs(for: "display-2")?.thisMac == 21 &&
+              swapped?.monitorInputs(for: "display-1")?.thisMac == 19, "inputs are kept per connection")
+        let legacyView = swapped.flatMap { try? JSONEncoder().encode($0) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        check((legacyView?["selectedUSBHubs"] as? [Any])?.count == 1 &&
+              (legacyView?["monitorInputs"] as? [String: Any])?["displayIdentifier"] as? String == "display-1",
+              "earlier builds read the hub group and the original display's inputs")
+    }
+
+    private static func checkMonitorIdentity() {
+        let identity = MonitorIdentity(name: "BenQ", knownIdentifiers: ["old"])
+        func display(_ identifier: String, _ name: String, builtIn: Bool = false) -> DisplayDescriptor {
+            DisplayDescriptor(identifier: identifier, name: name, isBuiltIn: builtIn)
+        }
+        check(identity.identifier(among: [display("new", "BenQ"), display("old", "Renamed")]) == "old",
+              "a known identity is preferred")
+        check(identity.identifier(among: [display("new", "BenQ"), display("lg", "LG")]) == "new",
+              "the only display with the monitor's name is a new connection")
+        check(identity.identifier(among: [display("a", "BenQ"), display("b", "BenQ")]) == nil,
+              "several displays with the monitor's name are ambiguous")
+        check(identity.identifier(among: [display("built-in", "BenQ", builtIn: true)]) == nil,
+              "built-in displays are never the monitor")
+    }
+
+    @MainActor
+    private static func checkConnectionRecognition() async {
+        var named = display("new-connection", builtIn: false, active: true, x: 0)
+        named.name = "External"
+        let system = CheckDisplayPrimarySystem(snapshots: [display("built-in", builtIn: true, active: true, x: -1440), named],
+                                               mainIdentifier: "new-connection")
+        let monitor = DisplayMonitor(configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["old"]),
+                                     debounceInterval: 0, primaryDisplaySystem: system)
+        check(monitor.start() && monitor.currentDisplayIdentifier == "new-connection",
+              "the monitor is recognised through a new connection")
+        monitor.stop()
     }
 
     private static func checkMenuStatus(_ settings: AppSettings) {
@@ -339,7 +384,7 @@ struct GetKbdChecks {
         )
 
         var withInputs = settings
-        withInputs.monitorInputs = both
+        withInputs.setMonitorInputs(both!)
         func monitorAction(hub: Bool, available: Bool = true) -> MonitorAction? {
             MenuStatus.make(
                 settings: withInputs,
@@ -358,6 +403,23 @@ struct GetKbdChecks {
         check(monitorAction(hub: true) == .switchToOtherMac, "active Mac offers switch to other Mac")
         check(monitorAction(hub: false) == .switchToThisMac, "inactive Mac offers switch to this Mac")
         check(monitorAction(hub: false, available: false) == nil, "unavailable monitor control hides the action")
+
+        var swappedCables = withInputs
+        swappedCables.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-2", thisMac: 21, otherMac: nil))
+        let afterSwap = MenuStatus.make(
+            settings: swappedCables,
+            snapshot: OwnershipSnapshot(keyboardState: .connectedLocal, ownershipReason: .none, monitorPresent: true,
+                                        usbHubPresent: true, isBusy: false, errorMessage: nil),
+            desiredState: nil,
+            currentDisplayIdentifier: "display-2",
+            monitorControlAvailable: true
+        )
+        check(afterSwap.monitorAction == .switchToOtherMac && swappedCables.monitorInputs(for: "display-2")?.otherMac == 19,
+              "after a cable swap, this Mac's input completes the pair from the earlier connection")
+
+        var unrelated = withInputs
+        unrelated.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-3", thisMac: 15, otherMac: nil))
+        check(unrelated.monitorInputs(for: "display-3")?.otherMac == nil, "an input outside the known pair is not completed")
     }
 
     @MainActor

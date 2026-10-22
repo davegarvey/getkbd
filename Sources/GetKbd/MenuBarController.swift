@@ -6,6 +6,7 @@ final class MenuBarController: NSObject {
     private let statusItem: NSStatusItem
     private let ownership: OwnershipController
     private let settingsStore: SettingsStore
+    private let currentDisplayIdentifier: () -> String?
     private let showSettings: () -> Void
     private let switchMonitor: (MonitorAction) -> Void
     private let enableBluetooth: () async -> Bool
@@ -22,6 +23,7 @@ final class MenuBarController: NSObject {
     init(
         ownership: OwnershipController,
         settingsStore: SettingsStore,
+        currentDisplayIdentifier: @escaping () -> String?,
         showSettings: @escaping () -> Void,
         switchMonitor: @escaping (MonitorAction) -> Void,
         enableBluetooth: @escaping () async -> Bool,
@@ -29,6 +31,7 @@ final class MenuBarController: NSObject {
     ) {
         self.ownership = ownership
         self.settingsStore = settingsStore
+        self.currentDisplayIdentifier = currentDisplayIdentifier
         self.showSettings = showSettings
         self.switchMonitor = switchMonitor
         self.enableBluetooth = enableBluetooth
@@ -52,6 +55,7 @@ final class MenuBarController: NSObject {
             settings: settingsStore.value,
             snapshot: ownership.snapshot,
             desiredState: ownership.desiredState,
+            currentDisplayIdentifier: currentDisplayIdentifier(),
             monitorControlAvailable: monitorControlAvailable,
             bluetoothActivation: bluetoothActivation
         )

@@ -33,10 +33,10 @@ final class MonitorInputTests: XCTestCase {
     func testSettingsWithoutInputsDecodeAndInputsForAnotherDisplayAreIgnored() throws {
         let json = #"{"selectedDisplay": {"identifier": "d", "name": "D", "isBuiltIn": false}}"#
         var settings = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
-        XCTAssertNil(settings.monitorInputs)
+        XCTAssertNil(settings.monitorInputs(for: "d"))
 
-        settings.monitorInputs = LearnedMonitorInputs(displayIdentifier: "other", thisMac: 19, otherMac: 21)
-        XCTAssertNil(settings.currentMonitorInputs)
+        settings.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "other", thisMac: 19, otherMac: 21))
+        XCTAssertNil(settings.monitorInputs(for: "d"))
 
         let data = try JSONEncoder().encode(settings)
         XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: data), settings)

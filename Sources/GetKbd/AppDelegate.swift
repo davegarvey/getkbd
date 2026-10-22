@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let settings = settingsStore.value
         keyboardController = IOBluetoothKeyboardController(configuredKeyboard: settings.selectedKeyboard)
-        displayMonitor = DisplayMonitor(configuredDisplayIdentifier: settings.selectedDisplay?.identifier)
+        displayMonitor = DisplayMonitor(configuredMonitor: settings.monitorIdentity)
         usbHubMonitor = USBHubMonitor(configuredHubIdentifiers: settings.selectedUSBHubIdentifiers)
         displayMonitor.primarySyncEnabled = settings.switchMainDisplay
         ownershipController = OwnershipController(
@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController = MenuBarController(
             ownership: ownershipController,
             settingsStore: settingsStore,
+            currentDisplayIdentifier: { [weak self] in self?.displayMonitor.currentDisplayIdentifier },
             showSettings: { [weak self] in self?.showSettings() },
             switchMonitor: { [weak self] action in self?.switchMonitor(action) },
             enableBluetooth: { [weak self] in
@@ -58,6 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.settingsWindowController?.reload()
             self.settingsWindowController?.showMessage(message)
             self.menuBarController.refresh()
+        }
+        displayMonitor.onIdentifierChange = { [weak self] _ in
+            self?.monitorConnectionChanged()
         }
         displayMonitor.onChange = { [weak self] isPresent in
             if isPresent {
@@ -91,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usbHubMonitor.onDevicesChanged = { [weak self] in
             self?.settingsWindowController?.usbHubListChanged()
         }
+
 
         sleepMonitor.onWillSleep = { [weak self] in
             self?.displayMonitor.setPrimaryDisplaySleeping(true)
@@ -142,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = LoginItemController.setEnabled(true)
         }
 
+        monitorConnectionChanged()
         menuBarController.refresh()
         learnMonitorInput()
 
@@ -160,13 +166,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitorInputLearner.cancel()
     }
 
+    /// Saves a newly recognised connection of the monitor so that it is recognised by
+    /// identity from then on, and learns the inputs for the current connection.
+    private func monitorConnectionChanged() {
+        var settings = settingsStore.value
+        if let displayIdentifier = displayMonitor.currentDisplayIdentifier,
+           settings.selectedDisplay != nil,
+           settings.connection(for: displayIdentifier) == nil {
+            settings.addConnection(displayIdentifier: displayIdentifier)
+            settingsStore.replace(settings)
+            displayMonitor.configuredMonitor = settings.monitorIdentity
+            GetKbdLog.event("monitor.connection.added", displayIdentifier)
+        }
+        menuBarController.refresh()
+        learnMonitorInput()
+    }
+
     /// Reads the monitor's input for the current hub state so that the menu can offer
     /// monitor switching. Learning never affects keyboard ownership.
     private func learnMonitorInput() {
         let settings = settingsStore.value
         guard !settings.needsOnboarding,
-              let displayIdentifier = settings.selectedDisplay?.identifier,
-              displayMonitor.isPresent else {
+              let displayIdentifier = displayMonitor.currentDisplayIdentifier else {
             monitorInputLearner.cancel()
             return
         }
@@ -175,19 +196,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func recordMonitorInput(_ value: Int, isThisMac: Bool, displayIdentifier: String) {
         var settings = settingsStore.value
-        guard settings.selectedDisplay?.identifier == displayIdentifier else { return }
+        guard settings.monitorIdentity?.knownIdentifiers.contains(displayIdentifier) == true else { return }
+        let existing = settings.monitorInputs(for: displayIdentifier)
         guard let inputs = LearnedMonitorInputs.recording(
             value,
             forThisMac: isThisMac,
             displayIdentifier: displayIdentifier,
-            into: settings.monitorInputs
+            into: existing
         ) else {
             GetKbdLog.event("monitor.input.conflict", "\(isThisMac ? "thisMac" : "otherMac")=\(value)")
             return
         }
-        guard inputs != settings.monitorInputs else { return }
+        settings.setMonitorInputs(inputs)
+        guard settings.monitorInputs(for: displayIdentifier) != existing else { return }
 
-        settings.monitorInputs = inputs
         settingsStore.replace(settings)
         GetKbdLog.event("monitor.input.learned", "\(isThisMac ? "thisMac" : "otherMac")=\(value)")
         menuBarController.refresh()
@@ -195,8 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func switchMonitor(_ action: MonitorAction) {
         let settings = settingsStore.value
-        guard let displayIdentifier = settings.selectedDisplay?.identifier,
-              let inputs = settings.currentMonitorInputs,
+        guard let displayIdentifier = displayMonitor.currentDisplayIdentifier,
+              let inputs = settings.monitorInputs(for: displayIdentifier),
               let target = action == .switchToOtherMac ? inputs.otherMac : inputs.thisMac else {
             return
         }
@@ -242,13 +264,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func apply(_ settings: AppSettings) {
         let previous = settingsStore.value
         var settings = settings
-        if previous.selectedDisplay?.identifier != settings.selectedDisplay?.identifier {
-            settings.monitorInputs = nil
+        let displayChanged = previous.selectedDisplay?.identifier != settings.selectedDisplay?.identifier
+        if displayChanged {
+            settings.monitorConnections = []
         }
         settingsStore.replace(settings)
 
-        if previous.selectedDisplay?.identifier != settings.selectedDisplay?.identifier {
-            displayMonitor.configuredDisplayIdentifier = settings.selectedDisplay?.identifier
+        if displayChanged {
+            displayMonitor.configuredMonitor = settings.monitorIdentity
         }
         if previous.selectedUSBHubIdentifiers != settings.selectedUSBHubIdentifiers {
             usbHubMonitor.configuredHubIdentifiers = settings.selectedUSBHubIdentifiers
@@ -269,9 +292,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ownershipController.reconfigureKeyboard(to: settings.selectedKeyboard)
         }
 
-        if previous.selectedDisplay?.identifier != settings.selectedDisplay?.identifier ||
-            previous.selectedUSBHubIdentifiers != settings.selectedUSBHubIdentifiers {
-            learnMonitorInput()
+        if displayChanged || previous.selectedUSBHubIdentifiers != settings.selectedUSBHubIdentifiers {
+            monitorConnectionChanged()
         }
         menuBarController.refresh()
     }

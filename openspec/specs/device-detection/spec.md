@@ -34,7 +34,9 @@ by Bluetooth class or by a name containing "keyboard".
 The system SHALL determine whether the configured display is online through local
 CoreGraphics display services, including when it has been temporarily disabled
 from the active desktop. Built-in displays SHALL be excluded from the selectable
-desk-display list.
+desk-display list. The configured display SHALL be recognised under any display
+identity it has been seen with, because macOS gives a monitor a different
+identity for each cable or input it is connected through.
 
 #### Scenario: External display is online
 
@@ -54,6 +56,19 @@ desk-display list.
   succession
 - **THEN** getkbd SHALL debounce evaluation using the configured interval, which
   defaults to 1.5 seconds, before publishing a changed physical condition
+
+#### Scenario: Monitor is connected through a different cable or input
+
+- **WHEN** no known identity of the configured display is online and exactly one
+  online external display has the configured display's name
+- **THEN** getkbd SHALL treat that display as the configured display and SHALL
+  remember its identity as another connection of the same monitor
+
+#### Scenario: Several displays share the monitor's name
+
+- **WHEN** no known identity of the configured display is online and more than
+  one online external display has its name
+- **THEN** getkbd SHALL treat the configured display as absent
 
 ### Requirement: Detect physical USB hubs for KVM switching
 

@@ -38,12 +38,15 @@ struct MenuStatus: Equatable {
         settings: AppSettings,
         snapshot: OwnershipSnapshot,
         desiredState: DesiredKeyboardState?,
+        currentDisplayIdentifier: String? = nil,
         monitorControlAvailable: Bool = false,
         bluetoothActivation: BluetoothActivationState = .idle
     ) -> MenuStatus {
         var status = keyboardStatus(settings: settings, snapshot: snapshot, desiredState: desiredState, bluetoothActivation: bluetoothActivation)
+        // Without a recognised identity, the selected display's own inputs apply.
         status.monitorAction = monitorAction(
             settings: settings,
+            inputs: settings.monitorInputs(for: currentDisplayIdentifier ?? settings.selectedDisplay?.identifier),
             snapshot: snapshot,
             monitorControlAvailable: monitorControlAvailable
         )
@@ -52,6 +55,7 @@ struct MenuStatus: Equatable {
 
     private static func monitorAction(
         settings: AppSettings,
+        inputs: LearnedMonitorInputs?,
         snapshot: OwnershipSnapshot,
         monitorControlAvailable: Bool
     ) -> MonitorAction? {
@@ -61,7 +65,7 @@ struct MenuStatus: Equatable {
               snapshot.keyboardState != .connecting,
               snapshot.keyboardState != .disconnecting,
               snapshot.monitorPresent,
-              let inputs = settings.currentMonitorInputs else {
+              let inputs else {
             return nil
         }
 

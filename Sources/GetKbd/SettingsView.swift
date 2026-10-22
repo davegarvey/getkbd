@@ -77,9 +77,12 @@ final class SettingsViewModel: ObservableObject {
     }
 
     var monitorNote: String? {
-        guard let selected = settings.selectedDisplay else { return nil }
-        let online = DisplayMonitor.currentDisplays().contains { $0.identifier == selected.identifier }
-        return online ? nil : "Not connected"
+        guard settings.selectedDisplay != nil else { return nil }
+        return currentDisplayIdentifier == nil ? "Not connected" : nil
+    }
+
+    private var currentDisplayIdentifier: String? {
+        settings.monitorIdentity?.identifier(among: DisplayMonitor.currentDisplays())
     }
 
     func reload() {
@@ -132,7 +135,8 @@ final class SettingsViewModel: ObservableObject {
     }
 
     func selectDisplay(identifier: String) {
-        guard let descriptor = displayOptions.first(where: { $0.identifier == identifier }) else { return }
+        guard identifier != settings.selectedDisplay?.identifier,
+              let descriptor = displayOptions.first(where: { $0.identifier == identifier }) else { return }
         var newSettings = settingsStore.value
         newSettings.selectedDisplay = descriptor
         commit(newSettings)
@@ -225,8 +229,10 @@ final class SettingsViewModel: ObservableObject {
             selectDisplay(identifier: displays[0].identifier)
             return
         }
-        if let selected = settings.selectedDisplay,
-           !displays.contains(where: { $0.identifier == selected.identifier }) {
+        // The selected monitor appears once, whichever of its connections is online.
+        if let selected = settings.selectedDisplay {
+            let online = settings.monitorIdentity?.identifier(among: displays)
+            displays.removeAll { $0.identifier == online }
             displays.insert(selected, at: 0)
         }
         displayOptions = displays

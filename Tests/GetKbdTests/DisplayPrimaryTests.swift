@@ -119,7 +119,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "external"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             primaryDisplaySystem: system
         )
 
@@ -144,7 +144,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "external"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             primaryDisplaySystem: system
         )
 
@@ -163,7 +163,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "external"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             debounceInterval: 0,
             primaryDisplaySystem: system
         )
@@ -190,7 +190,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "built-in"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             debounceInterval: 0,
             primaryDisplaySystem: system
         )
@@ -217,7 +217,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "external"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             debounceInterval: 0,
             primaryDisplaySystem: system
         )
@@ -244,7 +244,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "external"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             debounceInterval: 0,
             primaryDisplaySystem: system
         )
@@ -272,7 +272,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "built-in"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             debounceInterval: 0,
             primaryDisplaySystem: system
         )
@@ -298,7 +298,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "built-in"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             debounceInterval: 50.0 / 1_000.0,
             primaryDisplaySystem: system
         )
@@ -324,7 +324,7 @@ final class DisplayPrimaryTests: XCTestCase {
             mainIdentifier: "external"
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             debounceInterval: 0,
             primaryDisplaySystem: system
         )
@@ -361,7 +361,7 @@ final class DisplayPrimaryTests: XCTestCase {
             applyResult: false
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             primaryDisplaySystem: system
         )
 
@@ -381,7 +381,7 @@ final class DisplayPrimaryTests: XCTestCase {
             applyResult: false
         )
         let monitor = DisplayMonitor(
-            configuredDisplayIdentifier: "external",
+            configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),
             primaryDisplaySystem: system
         )
         monitor.updatePrimaryHubSignal(configured: true, present: true)
@@ -405,7 +405,7 @@ final class DisplayPrimaryTests: XCTestCase {
                 ],
                 mainIdentifier: hubPresent ? "built-in" : "external"
             )
-            let monitor = DisplayMonitor(configuredDisplayIdentifier: "external", debounceInterval: 0,
+            let monitor = DisplayMonitor(configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]), debounceInterval: 0,
                                          primaryDisplaySystem: system)
             monitor.setPrimaryScreensSleeping(true)
             _ = monitor.start()
@@ -431,7 +431,7 @@ final class DisplayPrimaryTests: XCTestCase {
                 ],
                 mainIdentifier: "external"
             )
-            let monitor = DisplayMonitor(configuredDisplayIdentifier: "external", debounceInterval: 0,
+            let monitor = DisplayMonitor(configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]), debounceInterval: 0,
                                          primaryDisplaySystem: system)
             monitor.primarySyncEnabled = condition != "disabled"
             monitor.setPrimaryDisplaySleeping(condition == "system-sleep")

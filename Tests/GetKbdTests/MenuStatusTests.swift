@@ -117,7 +117,7 @@ final class MenuStatusTests: XCTestCase {
 
     private func settingsWithInputs(thisMac: Int?, otherMac: Int?) -> AppSettings {
         var settings = configuredSettings
-        settings.monitorInputs = LearnedMonitorInputs(displayIdentifier: "display", thisMac: thisMac, otherMac: otherMac)
+        settings.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display", thisMac: thisMac, otherMac: otherMac))
         return settings
     }
 
