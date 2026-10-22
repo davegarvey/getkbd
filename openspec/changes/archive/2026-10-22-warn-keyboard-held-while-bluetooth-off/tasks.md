@@ -6,4 +6,4 @@
 ## 2. Verification
 
 - [ ] 2.1 Add menu-status checks for both Bluetooth-off titles
-- [ ] 2.2 On this Mac, turn Bluetooth off with the keyboard connected and confirm the title; turn it on again from the menu
+- [x] 2.2 On this Mac, turn Bluetooth off with the keyboard connected and confirm the title; turn it on again from the menu

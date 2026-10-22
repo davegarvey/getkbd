@@ -154,7 +154,8 @@ other Mac and back.
 
 The system SHALL check the local Bluetooth controller power state at startup, wake,
 and at one-second intervals while running. It SHALL distinguish powered on,
-powered off, and unavailable controller states.
+powered off, and unavailable controller states. It SHALL not change the Bluetooth
+power state except when the user chooses to turn Bluetooth on.
 
 #### Scenario: Bluetooth is off
 
@@ -162,6 +163,14 @@ powered off, and unavailable controller states.
 - **THEN** getkbd SHALL show "Bluetooth is off" with a keyboard icon carrying a small warning badge and an action
   to turn Bluetooth on, suppress keyboard actions, and pause automatic attempts
 - **AND** monitor switching SHALL remain available under its normal conditions
+
+#### Scenario: Bluetooth is off while the keyboard is still paired here
+
+- **WHEN** the local Bluetooth controller is powered off and the selected keyboard
+  is still paired to this Mac
+- **THEN** getkbd SHALL show "Bluetooth is off, so the keyboard can’t be released"
+  instead of "Bluetooth is off", with the same warning badge and the same action
+  to turn Bluetooth on
 
 #### Scenario: Bluetooth becomes available again
 
