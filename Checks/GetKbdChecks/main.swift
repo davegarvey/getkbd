@@ -356,7 +356,8 @@ struct GetKbdChecks {
             ),
             desiredState: .connected
         )
-        check(retrying.title == "Keyboard isn’t responding" && retrying.action == .tryNow, "retry loop offers try now")
+        check(retrying.title == "Keyboard isn’t answering. Switch it off and on, then choose Try Now." &&
+              retrying.action == .tryNow, "retry loop suggests a power cycle and offers try now")
     }
 
     private static func checkHubIdentification(_ hub: USBHubDescriptor) {
@@ -415,6 +416,17 @@ struct GetKbdChecks {
         check(monitorAction(hub: true) == .switchToOtherMac, "active Mac offers switch to other Mac")
         check(monitorAction(hub: false) == .switchToThisMac, "inactive Mac offers switch to this Mac")
         check(monitorAction(hub: false, available: false) == nil, "unavailable monitor control hides the action")
+        for (state, busy) in [(KeyboardConnectionState.connecting, true), (.disconnecting, true), (.failed, false)] {
+            let action = MenuStatus.make(
+                settings: withInputs,
+                snapshot: OwnershipSnapshot(keyboardState: state, ownershipReason: .usbHub, monitorPresent: true,
+                                            usbHubPresent: true, isBusy: busy, errorMessage: nil,
+                                            isRetryingClaim: !busy),
+                desiredState: .connected,
+                monitorControlAvailable: true
+            ).monitorAction
+            check(action == .switchToOtherMac, "keyboard activity (\(state)) does not hide the monitor switch")
+        }
 
         var swappedCables = withInputs
         swappedCables.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-2", thisMac: 21, otherMac: nil))
@@ -621,6 +633,29 @@ struct GetKbdChecks {
               "first slow retry waits its configured delay")
         check(slowFailures.connectStartTimes[2] - slowFailures.connectStartTimes[1] >= 40_000_000,
               "second slow retry waits its configured delay")
+
+        let persistentFailures = Keyboard()
+        persistentFailures.failures = 5
+        var persistentPolicy = slowPolicy
+        persistentPolicy.persistentRetryIntervalNanoseconds = 30_000_000
+        let persistent = OwnershipController(keyboard: persistentFailures, claimRetryPolicy: persistentPolicy)
+        persistent.start(monitorPresent: true, usbHubPresent: true)
+        while persistentFailures.connectCount < 6 { await Task.yield() }
+        await persistent.waitForIdle()
+        check(persistentFailures.connectCount == 6, "claims continue after backoff until one succeeds")
+        check(persistentFailures.connectStartTimes[4] - persistentFailures.connectStartTimes[3] >= 30_000_000,
+              "persistent retries wait their interval")
+
+        let abandoned = Keyboard()
+        abandoned.failures = 100
+        let leaving = OwnershipController(keyboard: abandoned, claimRetryPolicy: persistentPolicy)
+        leaving.start(monitorPresent: true, usbHubPresent: true)
+        while abandoned.connectCount < 4 { await Task.yield() }
+        leaving.usbHubDisconnected()
+        await leaving.waitForIdle()
+        let attemptsWhenLeft = abandoned.connectCount
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        check(abandoned.connectCount == attemptsWhenLeft, "persistent retries stop when the monitor leaves")
 
         let stuck = Keyboard()
         stuck.blockNext = true

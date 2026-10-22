@@ -185,9 +185,10 @@ window relocation resulting from a primary-display change.
 ### Requirement: Reconcile ownership changes and retry automatic operations
 
 The system SHALL converge toward the latest desired keyboard state after an
-in-flight operation and SHALL retry eligible automatic failures a bounded number
-of times. Automatic claim retries SHALL run sequentially and SHALL give the
-keyboard a rapid recovery period before backing off. The system SHALL let the
+in-flight operation and SHALL retry eligible automatic failures. Automatic release
+retries SHALL be bounded. Automatic claim retries SHALL run sequentially, SHALL
+give the keyboard a rapid recovery period before backing off, and SHALL then
+continue at a slow interval for as long as the claim remains eligible. The system SHALL let the
 user restart a claim immediately while one is in progress or awaiting retry.
 
 #### Scenario: Sensor reverses during a claim
@@ -200,8 +201,8 @@ user restart a claim immediately while one is in progress or awaiting retry.
 
 - **WHEN** an automatic claim or release fails while its triggering condition
   remains valid
-- **THEN** getkbd SHALL retry claims using the fast recovery window and bounded
-  backoff, SHALL retry releases twice one second apart, and SHALL stop retrying
+- **THEN** getkbd SHALL retry claims using the fast recovery window, backoff and
+  slow retries, SHALL retry releases twice one second apart, and SHALL stop retrying
   when the triggering condition no longer applies
 
 #### Scenario: Automatic claim retries during the fast recovery window
@@ -217,7 +218,14 @@ user restart a claim immediately while one is in progress or awaiting retry.
 - **WHEN** automatic claims continue to fail after the first two minutes of the
   retry cycle while the monitor and selected USB hub conditions remain eligible
 - **THEN** getkbd SHALL retry after waits of 15 seconds, 30 seconds, and 60
-  seconds, in that order, and SHALL stop after the final retry
+  seconds, in that order
+
+#### Scenario: Automatic claim keeps failing after backoff
+
+- **WHEN** the backoff retries have failed and the monitor and selected USB hub
+  conditions remain eligible
+- **THEN** getkbd SHALL retry the claim every five minutes until it succeeds, the
+  conditions stop being eligible, or the user chooses a manual action
 
 #### Scenario: Manual action overrides an automatic intent
 

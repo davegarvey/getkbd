@@ -5,12 +5,16 @@ struct AutomaticClaimRetryPolicy: Sendable {
     let minimumStartIntervalNanoseconds: UInt64
     let slowRetryDelaysNanoseconds: [UInt64]
     let releaseRetryDelaysNanoseconds: [UInt64]
+    /// The interval at which claims continue after the backoff delays, or nil to stop.
+    /// It is long because a failed claim keeps the radio paging for about 16 seconds.
+    var persistentRetryIntervalNanoseconds: UInt64? = nil
 
     static let standard = AutomaticClaimRetryPolicy(
         fastRecoveryWindowNanoseconds: 120_000_000_000,
         minimumStartIntervalNanoseconds: 5_000_000_000,
         slowRetryDelaysNanoseconds: [15_000_000_000, 30_000_000_000, 60_000_000_000],
-        releaseRetryDelaysNanoseconds: [1_000_000_000, 1_000_000_000]
+        releaseRetryDelaysNanoseconds: [1_000_000_000, 1_000_000_000],
+        persistentRetryIntervalNanoseconds: 300_000_000_000
     )
 }
 
@@ -451,12 +455,13 @@ final class OwnershipController {
                 let lastStartedAt = lastAutomaticClaimStartedAtNanoseconds ?? now
                 let earliestNextStart = lastStartedAt &+ claimRetryPolicy.minimumStartIntervalNanoseconds
                 delay = now >= earliestNextStart ? 0 : earliestNextStart - now
-            } else {
-                guard automaticClaimSlowRetryCount < claimRetryPolicy.slowRetryDelaysNanoseconds.count else {
-                    return
-                }
+            } else if automaticClaimSlowRetryCount < claimRetryPolicy.slowRetryDelaysNanoseconds.count {
                 delay = claimRetryPolicy.slowRetryDelaysNanoseconds[automaticClaimSlowRetryCount]
                 automaticClaimSlowRetryCount += 1
+            } else if let interval = claimRetryPolicy.persistentRetryIntervalNanoseconds {
+                delay = interval
+            } else {
+                return
             }
         } else {
             guard automaticReleaseRetryCount < claimRetryPolicy.releaseRetryDelaysNanoseconds.count else {

@@ -59,11 +59,10 @@ struct MenuStatus: Equatable {
         snapshot: OwnershipSnapshot,
         monitorControlAvailable: Bool
     ) -> MonitorAction? {
+        // Keyboard operations do not hide the action: switching does not depend on
+        // Bluetooth, and a hub change during a claim is reconciled once it finishes.
         guard monitorControlAvailable,
               !settings.needsOnboarding,
-              !snapshot.isBusy,
-              snapshot.keyboardState != .connecting,
-              snapshot.keyboardState != .disconnecting,
               snapshot.monitorPresent,
               let inputs else {
             return nil
@@ -100,7 +99,9 @@ struct MenuStatus: Equatable {
         }
 
         if snapshot.isRetryingClaim {
-            return MenuStatus(title: "Keyboard isn’t responding", action: .tryNow)
+            // This Mac cannot tell why the keyboard does not answer, so name the step that
+            // helps in most cases rather than a cause.
+            return MenuStatus(title: "Keyboard isn’t answering. Switch it off and on, then choose Try Now.", action: .tryNow)
         }
 
         switch snapshot.keyboardState {
