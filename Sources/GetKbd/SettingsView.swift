@@ -81,12 +81,6 @@ final class SettingsViewModel: ObservableObject {
         return currentDisplayIdentifier == nil ? "Not connected" : nil
     }
 
-    /// The monitor is online through a connection whose hubs have not been learned.
-    var currentConnectionNeedsSwitch: Bool {
-        guard let currentDisplayIdentifier else { return false }
-        return settings.connection(for: currentDisplayIdentifier)?.usbHubs.isEmpty ?? true
-    }
-
     private var currentDisplayIdentifier: String? {
         settings.monitorIdentity?.identifier(among: DisplayMonitor.currentDisplays())
     }
@@ -205,11 +199,7 @@ final class SettingsViewModel: ObservableObject {
             self.identification = nil
             let wasIncomplete = settingsStore.value.needsOnboarding
             var newSettings = settingsStore.value
-            guard let displayIdentifier = currentDisplayIdentifier ?? newSettings.selectedDisplay?.identifier else {
-                identificationFailed = true
-                return
-            }
-            newSettings.setUSBHubs(hubs, for: displayIdentifier)
+            newSettings.selectedUSBHubs = hubs
             commit(newSettings)
             if wasIncomplete, !settings.needsOnboarding {
                 completedSetupThisSession = true
@@ -423,13 +413,8 @@ private struct MonitorSwitchingRow: View {
         } else {
             LabeledContent("Monitor switching") {
                 HStack(spacing: 8) {
-                    if viewModel.currentConnectionNeedsSwitch {
-                        Text("Switch to your other Mac and back")
-                            .foregroundStyle(.orange)
-                    } else {
-                        Label("Set up", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
+                    Label("Set up", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.secondary)
                     Button("Set Up Again…") {
                         viewModel.startIdentification()
                     }

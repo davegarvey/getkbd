@@ -129,9 +129,9 @@ final class MenuStatusTests: XCTestCase {
         var settings = AppSettings.initial
         settings.selectedKeyboard = KeyboardDescriptor(identifier: "keyboard", name: "Keyboard")
         settings.selectedDisplay = DisplayDescriptor(identifier: "display", name: "Display", isBuiltIn: false)
-        settings.setUSBHubs([
+        settings.selectedUSBHubs = [
             USBHubDescriptor(identifier: "hub", name: "Hub", manufacturer: "", vendorID: 1, productID: 2)
-        ], for: "display")
+        ]
         return settings
     }
 

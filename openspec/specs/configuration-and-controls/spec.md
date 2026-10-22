@@ -10,8 +10,9 @@ setup workflow, and login startup experience.
 ### Requirement: Persist local application settings
 
 The system SHALL persist the selected keyboard, external display, USB hub group,
-main-display preference, launch-at-login preference, and the monitor inputs
-learned for the selected display between runs.
+the known connections of that display with each connection's learned monitor
+inputs, main-display preference, and launch-at-login preference between
+runs.
 
 #### Scenario: First run has no saved settings
 
@@ -38,6 +39,18 @@ learned for the selected display between runs.
   shortcut
 - **THEN** getkbd SHALL treat the single hub as a hub group of one and SHALL
   ignore the shortcut without requiring setup again
+
+#### Scenario: Settings without monitor connections are stored
+
+- **WHEN** stored settings contain learned inputs but no monitor connections
+- **THEN** getkbd SHALL treat them as the inputs of a single connection of the
+  selected display
+
+#### Scenario: An earlier version reads current settings
+
+- **WHEN** an earlier version of getkbd reads settings written by this version
+- **THEN** it SHALL find the hub group and the inputs learned for the originally
+  selected display
 
 ### Requirement: Guide local KVM setup
 
@@ -68,6 +81,12 @@ hub names, identifiers, or a hub list.
   this Mac's pairing and an unpaired keyboard is the normal state on the Mac the
   monitor is not showing
 
+#### Scenario: Selected monitor is online through another connection
+
+- **WHEN** the selected monitor is online under a different display identity
+- **THEN** the monitor list SHALL show the monitor once, selected, with no
+  offline note
+
 #### Scenario: User identifies the KVM hub
 
 - **WHEN** the user starts monitor-switch setup
@@ -93,6 +112,12 @@ hub names, identifiers, or a hub list.
   time
 - **THEN** settings SHALL confirm that switching the monitor now moves the
   keyboard and SHALL remind the user to set up getkbd on the other Mac
+
+#### Scenario: A different monitor is selected
+
+- **WHEN** the user selects a different monitor
+- **THEN** getkbd SHALL discard the previous monitor's connections and learned
+  inputs
 
 ### Requirement: Show actionable setup readiness
 

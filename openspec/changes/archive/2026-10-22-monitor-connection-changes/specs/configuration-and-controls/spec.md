@@ -2,9 +2,9 @@
 
 ### Requirement: Persist local application settings
 
-The system SHALL persist the selected keyboard, external display, the known
-connections of that display with each connection's USB hub group and learned
-monitor inputs, main-display preference, and launch-at-login preference between
+The system SHALL persist the selected keyboard, external display, USB hub group,
+the known connections of that display with each connection's learned monitor
+inputs, main-display preference, and launch-at-login preference between
 runs.
 
 #### Scenario: First run has no saved settings
@@ -35,15 +35,15 @@ runs.
 
 #### Scenario: Settings without monitor connections are stored
 
-- **WHEN** stored settings contain a hub group and learned inputs but no monitor
-  connections
-- **THEN** getkbd SHALL treat them as a single connection of the selected display
+- **WHEN** stored settings contain learned inputs but no monitor connections
+- **THEN** getkbd SHALL treat them as the inputs of a single connection of the
+  selected display
 
 #### Scenario: An earlier version reads current settings
 
 - **WHEN** an earlier version of getkbd reads settings written by this version
-- **THEN** it SHALL find the hubs of every connection as its hub group and the
-  inputs learned for the originally selected display
+- **THEN** it SHALL find the hub group and the inputs learned for the originally
+  selected display
 
 ### Requirement: Guide local KVM setup
 
@@ -85,8 +85,7 @@ hub names, identifiers, or a hub list.
 - **WHEN** the user starts monitor-switch setup
 - **THEN** getkbd SHALL instruct the user to switch the monitor to the other Mac
   and then back, SHALL show which part of the switch it is waiting for, and SHALL
-  save the detected hub group for the current connection when the switch
-  completes
+  save the detected hub group when the switch completes
 
 #### Scenario: Several hubs change during identification
 
@@ -110,52 +109,5 @@ hub names, identifiers, or a hub list.
 #### Scenario: A different monitor is selected
 
 - **WHEN** the user selects a different monitor
-- **THEN** getkbd SHALL discard the previous monitor's connections, hub groups,
-  and learned inputs, and setup SHALL ask for monitor-switch setup again
-
-### Requirement: Change settings in a compact form
-
-The settings window SHALL present a compact form that allows the user to change
-the keyboard and external display, repeat monitor-switch setup, change the
-main-display preference, and change the launch-at-login preference. It SHALL not
-contain manual keyboard controls or explanatory text about internal detection.
-
-#### Scenario: Keyboard selection changes
-
-- **WHEN** the user selects a different keyboard
-- **THEN** getkbd SHALL ask the ownership controller to release the old keyboard
-  before applying the new selection and SHALL restore the old selection if that
-  release fails
-
-#### Scenario: Main-display preference changes
-
-- **WHEN** the user changes "Switch the main display with the monitor"
-- **THEN** getkbd SHALL persist the preference and apply it to subsequent
-  primary-display decisions
-
-#### Scenario: Monitor switching is set up again
-
-- **WHEN** the user chooses to set up monitor switching again and the new setup
-  completes
-- **THEN** getkbd SHALL replace the hub group of the current connection with the
-  newly detected group and SHALL keep the hub groups of other connections
-
-#### Scenario: Current connection is not set up
-
-- **WHEN** the monitor is online through a connection with no hub group
-- **THEN** the monitor-switching row SHALL ask the user to switch the monitor to
-  the other Mac and back instead of showing that switching is set up
-
-## ADDED Requirements
-
-### Requirement: Show when a new monitor connection needs a switch
-
-The menu SHALL tell the user when the monitor is connected through a connection
-whose hub group has not been learned.
-
-#### Scenario: Monitor connection changed
-
-- **WHEN** setup is complete, the selected monitor is online through a connection
-  with no hub group, and the keyboard is not connected to this Mac
-- **THEN** the menu SHALL ask the user to switch the monitor to the other Mac and
-  back, SHALL offer Get Keyboard, and SHALL offer no monitor action
+- **THEN** getkbd SHALL discard the previous monitor's connections and learned
+  inputs

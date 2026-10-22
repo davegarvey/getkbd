@@ -26,7 +26,7 @@ struct GetKbdChecks {
             vendorID: 1,
             productID: 2
         )
-        settings.setUSBHubs([hub], for: "display-1")
+        settings.selectedUSBHubs = [hub]
         check(!settings.needsOnboarding, "complete local settings are ready")
 
         await checkBluetoothPowerActivation()
@@ -37,7 +37,6 @@ struct GetKbdChecks {
         checkMonitorInputs(settings)
         checkMonitorIdentity()
         await checkConnectionRecognition()
-        checkConnectionHubLearner()
         await checkMonitorInputLearner()
         await checkClaimRetries()
         await checkScreenWakeRecovery()
@@ -268,17 +267,14 @@ struct GetKbdChecks {
               "legacy hubs and inputs migrate to one connection")
 
         var swapped = decoded
-        swapped?.setUSBHubs([USBHubDescriptor(identifier: "hub-2", name: "Hub", manufacturer: "", vendorID: 1, productID: 3)],
-                            for: "display-2")
         swapped?.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-2", thisMac: 21, otherMac: 19))
-        check(swapped?.selectedUSBHubIdentifiers == ["hub-1", "hub-2"], "every connection's hubs form the group")
         check(swapped?.monitorInputs(for: "display-2")?.thisMac == 21 &&
               swapped?.monitorInputs(for: "display-1")?.thisMac == 19, "inputs are kept per connection")
         let legacyView = swapped.flatMap { try? JSONEncoder().encode($0) }
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        check((legacyView?["selectedUSBHubs"] as? [Any])?.count == 2 &&
+        check((legacyView?["selectedUSBHubs"] as? [Any])?.count == 1 &&
               (legacyView?["monitorInputs"] as? [String: Any])?["displayIdentifier"] as? String == "display-1",
-              "earlier builds read every hub and the original display's inputs")
+              "earlier builds read the hub group and the original display's inputs")
     }
 
     private static func checkMonitorIdentity() {
@@ -307,38 +303,6 @@ struct GetKbdChecks {
         check(monitor.start() && monitor.currentDisplayIdentifier == "new-connection",
               "the monitor is recognised through a new connection")
         monitor.stop()
-    }
-
-    @MainActor
-    private static func checkConnectionHubLearner() {
-        let start = Date()
-        let hub = USBHubDescriptor(identifier: "new-hub", name: "Hub", manufacturer: "", vendorID: 1, productID: 3)
-        let dock = USBHubDescriptor(identifier: "dock", name: "Hub", manufacturer: "", vendorID: 1, productID: 4)
-        var hubs = [hub]
-        var learned: [USBHubDescriptor]?
-        let learner = ConnectionHubLearner()
-        learner.onLearned = { hubs, identifier in
-            if identifier == "display-2" { learned = hubs }
-        }
-        learner.learn(displayIdentifier: "display-2") { hubs }
-
-        hubs = [hub, dock]
-        learner.tick(at: start + 1)
-        learner.tick(at: start + 4)
-        hubs = [hub]
-        learner.tick(at: start + 4 + ConnectionHubLearner.switchBackLimit)
-        learner.tick(at: start + 8 + ConnectionHubLearner.switchBackLimit)
-        check(learned == nil, "a half-finished switch is discarded")
-
-        let resumed = start + 10 + ConnectionHubLearner.switchBackLimit
-        hubs = []
-        learner.tick(at: resumed)
-        learner.tick(at: resumed + 3)
-        hubs = [hub]
-        learner.tick(at: resumed + 10)
-        learner.tick(at: resumed + 13)
-        check(learned == [hub], "a new connection's hubs are learned from a switch away and back")
-        check(learner.displayIdentifier == nil, "learning stops once the hubs are known")
     }
 
     private static func checkMenuStatus(_ settings: AppSettings) {
@@ -400,10 +364,6 @@ struct GetKbdChecks {
         var timedOut = HubIdentification(hubs: [hub], at: start)
         timedOut.tick(at: start + HubIdentification.timeout)
         check(timedOut.phase == .timedOut, "identification times out")
-
-        var waiting = HubIdentification(hubs: [hub], at: start, timeout: nil)
-        waiting.tick(at: start + HubIdentification.timeout * 10)
-        check(waiting.phase == .waitingForFirstSwitch, "background identification waits indefinitely")
     }
 
     private static func checkMonitorInputs(_ settings: AppSettings) {
@@ -444,18 +404,22 @@ struct GetKbdChecks {
         check(monitorAction(hub: false) == .switchToThisMac, "inactive Mac offers switch to this Mac")
         check(monitorAction(hub: false, available: false) == nil, "unavailable monitor control hides the action")
 
-        var newConnection = withInputs
-        newConnection.addConnection(displayIdentifier: "display-2")
-        let unlearned = MenuStatus.make(
-            settings: newConnection,
-            snapshot: OwnershipSnapshot(keyboardState: .disconnected, ownershipReason: .none, monitorPresent: true,
-                                        usbHubPresent: false, isBusy: false, errorMessage: nil),
+        var swappedCables = withInputs
+        swappedCables.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-2", thisMac: 21, otherMac: nil))
+        let afterSwap = MenuStatus.make(
+            settings: swappedCables,
+            snapshot: OwnershipSnapshot(keyboardState: .connectedLocal, ownershipReason: .none, monitorPresent: true,
+                                        usbHubPresent: true, isBusy: false, errorMessage: nil),
             desiredState: nil,
             currentDisplayIdentifier: "display-2",
             monitorControlAvailable: true
         )
-        check(unlearned.title == "Switch the monitor to your other Mac and back" && unlearned.action == .get &&
-              unlearned.monitorAction == nil, "an unlearned connection asks for a switch")
+        check(afterSwap.monitorAction == .switchToOtherMac && swappedCables.monitorInputs(for: "display-2")?.otherMac == 19,
+              "after a cable swap, this Mac's input completes the pair from the earlier connection")
+
+        var unrelated = withInputs
+        unrelated.setMonitorInputs(LearnedMonitorInputs(displayIdentifier: "display-3", thisMac: 15, otherMac: nil))
+        check(unrelated.monitorInputs(for: "display-3")?.otherMac == nil, "an input outside the known pair is not completed")
     }
 
     @MainActor
