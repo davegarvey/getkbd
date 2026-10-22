@@ -6,4 +6,4 @@
 ## 2. Verification
 
 - [ ] 2.1 Add checks for releasing a paired-but-disconnected keyboard, including after Bluetooth returns, and for keeping it while this Mac should own it
-- [ ] 2.2 Install on this Mac and confirm normal hand-overs still work
+- [x] 2.2 Install on this Mac and confirm normal hand-overs still work
