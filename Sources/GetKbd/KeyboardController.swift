@@ -76,6 +76,8 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     nonisolated private static let pairingTimeout: TimeInterval = 45
     private static let handoffSettleDelayNanoseconds: UInt64 = 1_000_000_000
     private static let connectionPollNanoseconds: UInt64 = 100_000_000
+    private static let addressLookupAttempts = 3
+    private static let addressLookupDelayNanoseconds: UInt64 = 1_000_000_000
 
     private let operationQueue = DispatchQueue(label: "com.getkbd.bluetooth", qos: .userInitiated)
     private let deviceLookupQueue = DispatchQueue(
@@ -189,7 +191,10 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
 
         lastError = nil
         updateState(.connecting)
-        GetKbdLog.event("keyboard.claim.started", configuredKeyboard?.name ?? "")
+        GetKbdLog.event(
+            "keyboard.claim.started",
+            "\(configuredKeyboard?.name ?? "") address=\(device.addressString ?? "none")"
+        )
 
         let cancellation = CancellationFlag()
         connectCancellation = cancellation
@@ -224,8 +229,22 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         guard requireBluetooth(), !cancellation.isCancelled else {
             return cancellation.isCancelled ? cancelClaim() : false
         }
-        GetKbdLog.event("keyboard.pair.started", configuredKeyboard?.name ?? "")
-        let pairResult = await runBluetoothCall { Self.pairDevice(box.device, cancellation: cancellation) }
+
+        // Removing the bond can leave this process holding a device object whose address is
+        // zero, which makes pairing target nothing and time out. Look the keyboard up again
+        // and make sure it has a real address before pairing.
+        guard let pairBox = await freshDeviceWithAddress(), !cancellation.isCancelled else {
+            if cancellation.isCancelled { return cancelClaim() }
+            fail("Bluetooth lost track of the keyboard's address")
+            GetKbdLog.error("keyboard.claim.failed", lastError ?? "Zero address")
+            return false
+        }
+        let pairedDevice = pairBox.device
+        GetKbdLog.event(
+            "keyboard.pair.started",
+            "\(configuredKeyboard?.name ?? "") address=\(pairedDevice.addressString ?? "none")"
+        )
+        let pairResult = await runBluetoothCall { Self.pairDevice(pairBox.device, cancellation: cancellation) }
 
         if pairResult == kIOReturnAborted, cancellation.isCancelled {
             return cancelClaim()
@@ -237,7 +256,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        let isPairedAfterPairing = await runBluetoothCheck { device.isPaired() }
+        let isPairedAfterPairing = await runBluetoothCheck { pairedDevice.isPaired() }
         guard pairResult == kIOReturnSuccess, isPairedAfterPairing else {
             fail("The keyboard could not be paired with this Mac (IOReturn \(pairResult))")
             GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing failed")
@@ -247,7 +266,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         updatePairing(true)
         GetKbdLog.event("keyboard.pair.success")
         guard requireBluetooth() else { return false }
-        let returnCode = await runBluetoothCall { box.device.openConnection() }
+        let returnCode = await runBluetoothCall { pairBox.device.openConnection() }
 
         guard let returnCode else {
             fail("Bluetooth connection timed out")
@@ -255,14 +274,14 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             return false
         }
 
-        let connected = await waitForConnection(device, connected: true)
+        let connected = await waitForConnection(pairedDevice, connected: true)
         guard connected else {
             fail("Bluetooth did not report the keyboard as connected (IOReturn \(returnCode))")
             GetKbdLog.error("keyboard.claim.failed", lastError ?? "Unknown failure")
             return false
         }
 
-        guard await runBluetoothCheck({ device.isPaired() }) else {
+        guard await runBluetoothCheck({ pairedDevice.isPaired() }) else {
             fail("Bluetooth connected, but the keyboard pairing did not finish")
             GetKbdLog.error("keyboard.claim.failed", lastError ?? "Pairing did not finish")
             return false
@@ -272,6 +291,26 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         updateState(.connectedLocal)
         GetKbdLog.event("keyboard.claim.success")
         return true
+    }
+
+    /// Looks the configured keyboard up again until Bluetooth reports a usable address for it.
+    private func freshDeviceWithAddress() async -> BluetoothDeviceBox? {
+        guard let identifier = configuredKeyboard?.identifier else { return nil }
+        for attempt in 1...Self.addressLookupAttempts {
+            if let box = Self.device(identifier: identifier),
+               Self.hasUsableAddress(box.device) {
+                return box
+            }
+            GetKbdLog.error("keyboard.address.invalid", "attempt \(attempt) of \(Self.addressLookupAttempts)")
+            try? await Task.sleep(nanoseconds: Self.addressLookupDelayNanoseconds)
+        }
+        return nil
+    }
+
+    nonisolated private static func hasUsableAddress(_ device: IOBluetoothDevice) -> Bool {
+        guard let address = device.addressString else { return false }
+        let digits = address.filter { $0.isHexDigit }
+        return !digits.isEmpty && digits.contains { $0 != "0" }
     }
 
     // Once pairing has succeeded the claim is left to finish, so cancellation only applies
