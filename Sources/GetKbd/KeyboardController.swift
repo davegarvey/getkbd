@@ -396,6 +396,10 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     nonisolated private static func device(identifier: String) -> BluetoothDeviceBox? {
+        let paired = (IOBluetoothDevice.pairedDevices() ?? [])
+            .compactMap { $0 as? IOBluetoothDevice }
+            .first { $0.addressString == identifier }
+        if let paired { return BluetoothDeviceBox(device: paired) }
         guard let device = IOBluetoothDevice(addressString: identifier) else { return nil }
         return BluetoothDeviceBox(device: device)
     }
