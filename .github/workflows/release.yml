@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build macOS app
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run Swift package tests
+        run: swift test
+      - name: Run project checks
+        run: bash scripts/run-checks.sh
+      - name: Resolve semantic version from tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a semantic version tag such as v1.2.3, got $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          echo "GETKBD_VERSION=$version" >> "$GITHUB_ENV"
+          echo "GETKBD_BUILD=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+      - name: Build universal app
+        env:
+          GETKBD_ARCHS: arm64 x86_64
+        run: ./scripts/build-app.sh release
+      - name: Package app
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            .build/release/getkbd.app dist/getkbd-macos-universal.zip
+          cd dist
+          shasum -a 256 getkbd-macos-universal.zip \
+            > getkbd-macos-universal.zip.sha256
+      - name: Upload release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: getkbd-macos-universal
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@v4
+        with:
+          name: getkbd-macos-universal
+          path: dist
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          --verify-tag
+          --generate-notes
+          dist/getkbd-macos-universal.zip
+          dist/getkbd-macos-universal.zip.sha256
