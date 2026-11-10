@@ -57,10 +57,10 @@ final class MenuStatusTests: XCTestCase {
         XCTAssertEqual(status, MenuStatus(title: "Monitor not connected", action: .get))
     }
 
-    func testOperationInProgressOffersNoAction() {
-        XCTAssertEqual(make(snapshot(keyboard: .connecting)).action, nil)
+    func testOperationInProgressOffersTryNowWhileConnecting() {
+        XCTAssertEqual(make(snapshot(keyboard: .connecting)).action, .tryNow)
         XCTAssertEqual(make(snapshot(keyboard: .disconnecting)).title, "Releasing keyboard…")
-        XCTAssertEqual(make(snapshot(keyboard: .disconnected, busy: true), desired: .connected).action, nil)
+        XCTAssertEqual(make(snapshot(keyboard: .disconnected, busy: true), desired: .connected).action, .tryNow)
     }
 
     func testFailureOffersRetry() {
