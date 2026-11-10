@@ -18,6 +18,17 @@ the old Mac does not immediately reconnect.
 - **WHEN** the selected keyboard is already paired and connected to this Mac
 - **THEN** a claim SHALL succeed without creating a new pairing
 
+#### Scenario: Claim a keyboard that is paired here but reported disconnected
+
+- **WHEN** a claim is requested and the selected keyboard is still paired to this
+  Mac but not reported as connected, for example because macOS reported a
+  disconnect to getkbd when its pairing session ended
+- **THEN** getkbd SHALL first open a connection over the existing pairing and,
+  if the keyboard is connected and paired within five seconds, the claim SHALL
+  succeed without removing the pairing
+- **AND** only if that fails SHALL getkbd continue as for a keyboard claimed from
+  another Mac
+
 #### Scenario: Claim a keyboard from another Mac
 
 - **WHEN** a claim is requested for a resolvable selected keyboard that is not
