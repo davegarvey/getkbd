@@ -1,0 +1,152 @@
+name: Version
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: getkbd-version
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Prepare semantic release
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out main with full history
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install Grubble
+        run: |
+          version=5.10.3
+          archive="grubble-linux-x86_64.tar.gz"
+          base="https://github.com/davegarvey/grubble/releases/download/v$version"
+          curl -fsSL "$base/$archive" -o "$archive"
+          curl -fsSL "$base/$archive.sha256" -o "$archive.sha256"
+          shasum -a 256 -c "$archive.sha256"
+          tar -xzf "$archive"
+          chmod +x grubble
+          echo "$PWD" >> "$GITHUB_PATH"
+          ./grubble --version
+
+      - name: Tag merged release PR and dispatch app release
+        env:
+          MERGED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          pr_json="$(gh pr list \
+            --state merged \
+            --base main \
+            --limit 100 \
+            --json number,headRefName,mergeCommit \
+            | jq -c --arg sha "$MERGED_SHA" \
+                '[.[] | select(.mergeCommit.oid == $sha) | select(.headRefName | test("^release/v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | first // empty')"
+
+          if [[ -z "$pr_json" ]]; then
+            echo "No merged release PR matches this successful main CI run."
+            exit 0
+          fi
+
+          pr_number="$(jq -r '.number' <<< "$pr_json")"
+          release_spec="$(grubble --release-from-pr "$pr_number" --output json)"
+          tag_name="$(jq -r '.tag_name' <<< "$release_spec")"
+          merge_sha="$(jq -r '.merge_commit_sha' <<< "$release_spec")"
+
+          if [[ -z "$tag_name" || "$tag_name" == "null" || -z "$merge_sha" || "$merge_sha" == "null" ]]; then
+            echo "::error::Grubble could not resolve the merged release PR."
+            exit 1
+          fi
+
+          git fetch origin --tags --force
+          if git show-ref --verify --quiet "refs/tags/$tag_name"; then
+            existing_sha="$(git rev-parse "$tag_name^{commit}")"
+            if [[ "$existing_sha" != "$merge_sha" ]]; then
+              echo "::error::Tag $tag_name already points to $existing_sha, expected $merge_sha."
+              exit 1
+            fi
+            echo "Tag $tag_name already points to the release merge commit."
+          else
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$tag_name" \
+              -f "sha=$merge_sha"
+          fi
+
+          # GITHUB_TOKEN pushes do not trigger tag-push workflows. Dispatch the
+          # publisher explicitly against the tag instead.
+          gh workflow run release.yml --ref "$tag_name"
+
+      - name: Open or refresh the next release PR
+        run: |
+          git fetch origin --tags --force
+
+          initial_version_args=()
+          if ! git tag --list | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            initial_version_args=(--initial-version 0.1.0)
+          fi
+
+          bump_type="$(grubble --preset git --bump-type "${initial_version_args[@]}")"
+          if [[ "$bump_type" == "none" ]]; then
+            echo "No release-worthy commits since the last version tag."
+            exit 0
+          fi
+
+          version="$(grubble --preset git --raw "${initial_version_args[@]}")"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Grubble returned an invalid semantic version: $version"
+            exit 1
+          fi
+
+          branch="release/v$version"
+          git checkout -B "$branch" origin/main
+          grubble --release-version "$version" \
+            --preset git \
+            --changelog \
+            --git-user-name "github-actions[bot]" \
+            --git-user-email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          remote_sha="$(git ls-remote origin "refs/heads/$branch" | awk 'NR == 1 {print $1}')"
+          if [[ -n "$remote_sha" ]]; then
+            git push "--force-with-lease=refs/heads/$branch:$remote_sha" origin "$branch"
+          else
+            git push origin "$branch"
+          fi
+
+          # Close an older release PR if the newly computed bump changed its
+          # version, then create or update the single current release PR.
+          old_prs="$(gh pr list --state open --base main --json number,headRefName \
+            | jq -r --arg branch "$branch" \
+                '.[] | select((.headRefName | test("^release/v[0-9]+\\.[0-9]+\\.[0-9]+$")) and .headRefName != $branch) | .number')"
+          while IFS= read -r old_pr; do
+            [[ -z "$old_pr" ]] || gh pr close "$old_pr" \
+              --comment "Superseded by the updated release/v$version PR."
+          done <<< "$old_prs"
+
+          changelog_entry="$(grubble --changelog-entry)"
+          pr_number="$(gh pr list --state open --base main --head "$branch" --json number \
+            --jq '.[0].number // ""')"
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" \
+              --title "Release v$version" \
+              --body "$changelog_entry"
+          else
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "Release v$version" \
+              --body "$changelog_entry"
+          fi
