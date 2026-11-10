@@ -27,6 +27,11 @@ final class OwnershipController {
 
     var onChange: ((OwnershipSnapshot) -> Void)?
     var onKeyboardReconfigurationFailure: ((String) -> Void)?
+    /// Asked before a claim or release starts; returning false leaves the operation unstarted.
+    var operationGate: ((DesiredKeyboardState) -> Bool)?
+    /// Reports each finished operation: target, success, whether it was automatic, and
+    /// whether a claim got no answer from Bluetooth.
+    var onOperationFinished: ((DesiredKeyboardState, Bool, Bool, Bool) -> Void)?
 
     private var monitorPresent = false
     private var usbHubPresent = false
@@ -34,6 +39,7 @@ final class OwnershipController {
     private var manualTarget: DesiredKeyboardState?
     private var operationInProgress = false
     private var operationTarget: DesiredKeyboardState?
+    private var operationIsAutomatic = false
     private var restartClaimRequested = false
     private var failedDesiredState: DesiredKeyboardState?
     private var lastError: String?
@@ -50,6 +56,8 @@ final class OwnershipController {
 
     private static let usbHubClaimDelayNanoseconds: UInt64 = 750_000_000
     private let claimRetryPolicy: AutomaticClaimRetryPolicy
+
+    var isOperationInProgress: Bool { operationInProgress }
 
     private var automaticClaimReady: Bool {
         !isSleeping && monitorPresent && usbHubPresent
@@ -300,6 +308,7 @@ final class OwnershipController {
 
     private func beginOperation(for target: DesiredKeyboardState) {
         guard !operationInProgress, keyboard.bluetoothAvailability == .poweredOn else { return }
+        if let operationGate, !operationGate(target) { return }
 
         if target == .connected, manualTarget == nil {
             let now = DispatchTime.now().uptimeNanoseconds
@@ -309,6 +318,7 @@ final class OwnershipController {
 
         operationInProgress = true
         operationTarget = target
+        operationIsAutomatic = manualTarget == nil
         lastError = nil
         publish()
 
@@ -336,6 +346,12 @@ final class OwnershipController {
         keyboard.refreshState()
         operationInProgress = false
         operationTarget = nil
+        onOperationFinished?(
+            target,
+            succeeded,
+            operationIsAutomatic,
+            target == .connected && !succeeded && keyboard.lastClaimWasUnanswered
+        )
 
         if hasPendingKeyboardConfiguration {
             if keyboard.state == .connectedLocal || keyboard.isPaired {

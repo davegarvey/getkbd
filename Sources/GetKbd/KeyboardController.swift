@@ -11,6 +11,8 @@ protocol KeyboardControlling: AnyObject {
     var bluetoothAvailability: BluetoothAvailability { get }
     var onBluetoothAvailabilityChange: (() -> Void)? { get set }
     var lastError: String? { get }
+    /// Whether the last claim ended at getkbd's pairing timeout with no result from Bluetooth.
+    var lastClaimWasUnanswered: Bool { get }
     var onStateChange: ((KeyboardConnectionState) -> Void)? { get set }
 
     func availableKeyboards() async -> [KeyboardDescriptor]
@@ -24,6 +26,7 @@ protocol KeyboardControlling: AnyObject {
 
 extension KeyboardControlling {
     var isPaired: Bool { state == .connectedLocal }
+    var lastClaimWasUnanswered: Bool { false }
 }
 
 private final class ContinuationGate<Value: Sendable>: @unchecked Sendable {
@@ -101,6 +104,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     var state: KeyboardConnectionState { stateValue }
     private(set) var isPaired = false
     private(set) var lastError: String?
+    private(set) var lastClaimWasUnanswered = false
     var onStateChange: ((KeyboardConnectionState) -> Void)?
 
     init(configuredKeyboard: KeyboardDescriptor?) {
@@ -176,6 +180,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     func connect() async -> Bool {
+        lastClaimWasUnanswered = false
         guard requireBluetooth() else { return false }
         guard let box = await resolvedDevice() else {
             fail("No paired keyboard is selected")
@@ -245,6 +250,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             "\(configuredKeyboard?.name ?? "") address=\(pairedDevice.addressString ?? "none")"
         )
         let pairResult = await runBluetoothCall { Self.pairDevice(pairBox.device, cancellation: cancellation) }
+        lastClaimWasUnanswered = pairResult == nil || pairResult == kIOReturnTimeout
 
         if pairResult == kIOReturnAborted, cancellation.isCancelled {
             return cancelClaim()
@@ -506,7 +512,8 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         guard delegate.finished else {
             pairer.delegate = nil
             pairer.stop()
-            return cancellation.isCancelled ? kIOReturnAborted : kIOReturnError
+            // A timeout means Bluetooth never reported a result, unlike a page timeout.
+            return cancellation.isCancelled ? kIOReturnAborted : kIOReturnTimeout
         }
 
         pairer.delegate = nil
