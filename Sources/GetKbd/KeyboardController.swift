@@ -79,7 +79,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     nonisolated private static let pairingTimeout: TimeInterval = 45
     private static let handoffSettleDelayNanoseconds: UInt64 = 1_000_000_000
     private static let connectionPollNanoseconds: UInt64 = 100_000_000
-    private static let reconnectTimeout: TimeInterval = 5
+    private static let reconnectTimeoutNanoseconds: UInt64 = 5_000_000_000
     private static let addressLookupAttempts = 3
     private static let addressLookupDelayNanoseconds: UInt64 = 1_000_000_000
 
@@ -216,18 +216,29 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         // and leave it refusing new pairings until it is switched off and on, so reconnect
         // first and only pair again if that fails.
         if await runBluetoothCheck({ device.isPaired() }) {
+            guard !cancellation.isCancelled else { return cancelClaim() }
             GetKbdLog.event("keyboard.reconnect.started", configuredKeyboard?.name ?? "")
-            if await reconnectExistingPairing(box) {
+            let reconnect = await reconnectExistingPairing(box, cancellation: cancellation)
+            if reconnect == .connected {
                 lastError = nil
                 updateState(.connectedLocal)
                 GetKbdLog.event("keyboard.reconnect.success")
                 return true
             }
-            GetKbdLog.event("keyboard.reconnect.failed", "removing the pairing and pairing again")
             guard !cancellation.isCancelled else { return cancelClaim() }
+            // openConnection may still be executing after its wait has expired. Do not queue
+            // pairing removal behind it: its eventual result could reconnect the old bond.
+            guard reconnect.shouldFallbackToPairing else {
+                fail("Bluetooth reconnect timed out; the existing pairing was left unchanged")
+                GetKbdLog.error("keyboard.reconnect.failed", lastError ?? "Timed out")
+                return false
+            }
+            GetKbdLog.event("keyboard.reconnect.failed", "removing the pairing and pairing again")
         }
 
-        guard requireBluetooth() else { return false }
+        guard requireBluetooth(), !cancellation.isCancelled else {
+            return cancellation.isCancelled ? cancelClaim() : false
+        }
         let removeResult = await runBluetoothCall { Self.removePairing(box.device) }
 
         guard let removeResult else {
@@ -318,14 +329,33 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     /// Opens a connection over the pairing this Mac already holds, without changing the pairing.
-    private func reconnectExistingPairing(_ box: BluetoothDeviceBox) async -> Bool {
-        guard requireBluetooth() else { return false }
+    enum ReconnectResult: Equatable {
+        case connected, failed, timedOut, cancelled
+
+        var shouldFallbackToPairing: Bool { self == .failed }
+    }
+
+    private func reconnectExistingPairing(
+        _ box: BluetoothDeviceBox,
+        cancellation: CancellationFlag
+    ) async -> ReconnectResult {
+        guard requireBluetooth() else { return .failed }
+        guard !cancellation.isCancelled else { return .cancelled }
         let device = box.device
-        guard await runBluetoothCall({ box.device.openConnection() }) != nil else { return false }
-        guard await waitForConnection(device, connected: true, timeout: Self.reconnectTimeout) else {
-            return false
-        }
-        return await runBluetoothCheck { device.isPaired() }
+        let deadline = Date().addingTimeInterval(5)
+        guard let result = await runBluetoothCall(
+            timeoutNanoseconds: Self.reconnectTimeoutNanoseconds,
+            { box.device.openConnection() }
+        ) else { return .timedOut }
+        guard !cancellation.isCancelled else { return .cancelled }
+        guard result == kIOReturnSuccess else { return .failed }
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0,
+              await waitForConnection(device, connected: true, timeout: remaining) else { return .failed }
+        guard !cancellation.isCancelled else { return .cancelled }
+        let isPaired = await runBluetoothCheck { device.isPaired() }
+        guard !cancellation.isCancelled else { return .cancelled }
+        return isPaired ? .connected : .failed
     }
 
     /// Looks the configured keyboard up again until Bluetooth reports a usable address for it.
@@ -584,6 +614,16 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     private func runBluetoothCall(
         _ operation: @escaping @Sendable () -> IOReturn
     ) async -> IOReturn? {
+        await runBluetoothCall(
+            timeoutNanoseconds: Self.operationTimeoutNanoseconds,
+            operation
+        )
+    }
+
+    private func runBluetoothCall(
+        timeoutNanoseconds: UInt64,
+        _ operation: @escaping @Sendable () -> IOReturn
+    ) async -> IOReturn? {
         await withCheckedContinuation { continuation in
             let gate = ContinuationGate(continuation)
 
@@ -592,7 +632,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
             }
 
             Task.detached {
-                try? await Task.sleep(nanoseconds: Self.operationTimeoutNanoseconds)
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 gate.resume(returning: nil)
             }
         }
