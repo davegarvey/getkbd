@@ -10,6 +10,18 @@ struct GetKbdChecks {
         )
 
         check(AppSettings.initial.needsOnboarding, "initial settings require setup")
+        check(
+            !IOBluetoothKeyboardController.ReconnectResult.timedOut.shouldFallbackToPairing,
+            "reconnect timeout leaves the existing pairing untouched"
+        )
+        check(
+            IOBluetoothKeyboardController.ReconnectResult.failed.shouldFallbackToPairing,
+            "a completed reconnect failure may use the pairing fallback"
+        )
+        check(
+            !IOBluetoothKeyboardController.ReconnectResult.connected.shouldFallbackToPairing,
+            "successful reconnect never removes the pairing"
+        )
 
         let configured = KeyboardDescriptor(identifier: "keyboard-1", name: "Shared Keyboard")
         var settings = AppSettings.initial
