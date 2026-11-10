@@ -22,6 +22,10 @@ struct GetKbdChecks {
             !IOBluetoothKeyboardController.ReconnectResult.connected.shouldFallbackToPairing,
             "successful reconnect never removes the pairing"
         )
+        check(
+            !IOBluetoothKeyboardController.ReconnectResult.cancelled.shouldFallbackToPairing,
+            "cancelled reconnect never removes the pairing"
+        )
 
         let configured = KeyboardDescriptor(identifier: "keyboard-1", name: "Shared Keyboard")
         var settings = AppSettings.initial
