@@ -42,6 +42,9 @@ struct GetKbdChecks {
         await checkDormantPairingRelease()
         await checkScreenWakeRecovery()
         await checkScreenNotificationRouting()
+        checkBluetoothRecoveryPolicy()
+        checkBluetoothRecoveryMonitor()
+        await checkOperationGate()
 
         print("GetKbd checks passed.")
     }
@@ -468,6 +471,146 @@ struct GetKbdChecks {
         silent.learn(displayIdentifier: "d", hubPresent: true)
         await silent.waitForIdle()
         check(available == false, "silent monitor is reported unavailable")
+    }
+
+    private static func checkBluetoothRecoveryPolicy() {
+        typealias Policy = BluetoothRecoveryPolicy
+        let first = BluetoothServiceIdentity(pid: 100, startSeconds: 1_000, startMicroseconds: 0)
+        let second = BluetoothServiceIdentity(pid: 200, startSeconds: 2_000, startMicroseconds: 0)
+        let now = Date(timeIntervalSince1970: 10_000)
+
+        var policy = Policy()
+        check(policy.observe(first) == nil, "the first daemon identity is the baseline")
+        check(policy.observe(first) == nil && policy.observe(nil) == nil,
+              "an unchanged or briefly missing daemon is not a restart")
+        check(policy.decide(now: now, operationInProgress: false, sleeping: false) == .none,
+              "no relaunch without a restart")
+        check(policy.observe(second) == second, "a new daemon identity is a restart")
+        check(policy.observe(second) == nil, "a restart is reported once")
+        check(policy.decide(now: now, operationInProgress: true, sleeping: false) == .deferred,
+              "a relaunch waits for a running operation")
+        check(policy.decide(now: now, operationInProgress: false, sleeping: true) == .deferred,
+              "a relaunch waits for wake")
+        check(policy.decide(now: now, operationInProgress: false, sleeping: false) == .relaunch(.serviceRestarted),
+              "a daemon restart causes a relaunch")
+        let reused = BluetoothServiceIdentity(pid: 100, startSeconds: 3_000, startMicroseconds: 0)
+        var reuse = Policy()
+        _ = reuse.observe(first)
+        check(reuse.observe(reused) == reused, "a reused PID with a new start time is a restart")
+
+        var claims = Policy()
+        _ = claims.observe(first)
+        claims.claimFinished(succeeded: false, automatic: true, unanswered: true)
+        check(claims.decide(now: now, operationInProgress: false, sleeping: false) == .none,
+              "one unanswered claim is not enough to relaunch")
+        claims.claimFinished(succeeded: false, automatic: false, unanswered: true)
+        check(claims.unansweredClaims == 1, "manual claims do not count towards a relaunch")
+        claims.claimFinished(succeeded: false, automatic: true, unanswered: false)
+        check(claims.unansweredClaims == 0, "an answered failure resets the count")
+        claims.claimFinished(succeeded: false, automatic: true, unanswered: true)
+        claims.claimFinished(succeeded: false, automatic: true, unanswered: true)
+        check(claims.decide(now: now, operationInProgress: false, sleeping: false) == .relaunch(.unansweredClaims),
+              "two unanswered automatic claims cause a relaunch")
+        claims.claimFinished(succeeded: true, automatic: true, unanswered: false)
+        check(claims.pendingReason == nil, "a successful claim clears the count")
+
+        var limited = Policy(lastRelaunch: now.addingTimeInterval(-60))
+        _ = limited.observe(first)
+        _ = limited.observe(second)
+        check(limited.decide(now: now, operationInProgress: false, sleeping: false) == .skipped(.serviceRestarted, log: true),
+              "a relaunch within 10 minutes of the last is skipped and logged")
+        check(limited.decide(now: now, operationInProgress: false, sleeping: false) == .skipped(.serviceRestarted, log: false),
+              "a skipped relaunch is logged once")
+        check(limited.decide(now: now.addingTimeInterval(541), operationInProgress: false, sleeping: false)
+                == .relaunch(.serviceRestarted),
+              "a skipped relaunch happens once 10 minutes have passed")
+        var future = Policy(lastRelaunch: now.addingTimeInterval(60))
+        _ = future.observe(first)
+        _ = future.observe(second)
+        check(future.decide(now: now, operationInProgress: false, sleeping: false) == .relaunch(.serviceRestarted),
+              "a last relaunch time in the future does not block a relaunch")
+
+        var unavailable = Policy()
+        _ = unavailable.observe(first)
+        _ = unavailable.observe(second)
+        unavailable.acceptCurrentState()
+        check(unavailable.decide(now: now, operationInProgress: false, sleeping: false) == .none
+                && unavailable.observe(second) == nil,
+              "accepting the current state ends the pending relaunch")
+    }
+
+    @MainActor
+    private static func checkBluetoothRecoveryMonitor() {
+        final class Relauncher: ApplicationRelaunching {
+            var available = true
+            var count = 0
+            func relaunch() -> Bool {
+                count += 1
+                return available
+            }
+        }
+
+        let suite = "getkbd-checks-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            check(false, "check defaults are available")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var identity = BluetoothServiceIdentity(pid: 100, startSeconds: 1_000, startMicroseconds: 0)
+        let relauncher = Relauncher()
+        let monitor = BluetoothRecoveryMonitor(
+            identity: { identity },
+            relauncher: relauncher,
+            defaults: defaults,
+            now: { Date(timeIntervalSince1970: 10_000) }
+        )
+        monitor.start()
+        check(monitor.allowClaim() && relauncher.count == 0, "claims proceed while the daemon is unchanged")
+        identity = BluetoothServiceIdentity(pid: 200, startSeconds: 2_000, startMicroseconds: 0)
+        var busy = true
+        monitor.isOperationInProgress = { busy }
+        monitor.evaluate()
+        check(relauncher.count == 0, "no relaunch while an operation runs")
+        busy = false
+        check(!monitor.allowClaim() && relauncher.count == 1 && monitor.isRelaunching,
+              "a claim after a daemon restart relaunches instead")
+        check(defaults.double(forKey: BluetoothRecoveryMonitor.lastRelaunchKey) == 10_000,
+              "the relaunch time is stored for the rate limit")
+        check(!monitor.allowClaim() && relauncher.count == 1, "no claim or second relaunch while relaunching")
+        monitor.stop()
+
+        let unbundled = Relauncher()
+        unbundled.available = false
+        var other = BluetoothServiceIdentity(pid: 100, startSeconds: 1_000, startMicroseconds: 0)
+        let fallback = BluetoothRecoveryMonitor(identity: { other }, relauncher: unbundled, defaults: defaults)
+        fallback.start()
+        other = BluetoothServiceIdentity(pid: 300, startSeconds: 3_000, startMicroseconds: 0)
+        check(fallback.allowClaim() && unbundled.count == 1, "claims continue when relaunch is unavailable")
+        check(fallback.allowClaim() && unbundled.count == 1, "an unavailable relaunch is not retried")
+        fallback.stop()
+    }
+
+    @MainActor
+    private static func checkOperationGate() async {
+        let keyboard = CheckKeyboardController()
+        let ownership = OwnershipController(keyboard: keyboard)
+        ownership.operationGate = { _ in false }
+        ownership.start(monitorPresent: true, usbHubPresent: true)
+        await ownership.waitForIdle()
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        check(keyboard.claims == 0, "a refused gate starts no claim")
+
+        let allowed = CheckKeyboardController()
+        let open = OwnershipController(keyboard: allowed)
+        var finished: [(DesiredKeyboardState, Bool, Bool, Bool)] = []
+        open.onOperationFinished = { finished.append(($0, $1, $2, $3)) }
+        open.start(monitorPresent: true, usbHubPresent: true)
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        await open.waitForIdle()
+        check(allowed.claims == 1 && finished.count == 1
+                && finished[0].0 == .connected && finished[0].1 && finished[0].2 && !finished[0].3,
+              "a finished automatic claim is reported")
     }
 
     @MainActor

@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitorInputControl: MonitorInputControl = IOAVMonitorInputControl()
     private lazy var monitorInputLearner = MonitorInputLearner(control: monitorInputControl)
     private var monitorSwitchWatchdog: Task<Void, Never>?
+    private let bluetoothRecovery = BluetoothRecoveryMonitor()
 
     private var keyboardController: IOBluetoothKeyboardController!
     private var displayMonitor: DisplayMonitor!
@@ -46,6 +47,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             quit: { NSApp.terminate(nil) }
         )
+
+        bluetoothRecovery.isOperationInProgress = { [weak self] in
+            self?.ownershipController.isOperationInProgress ?? false
+        }
+        ownershipController.operationGate = { [weak self] target in
+            guard let self else { return true }
+            // Releases go ahead so that no pairing is left behind; the relaunch follows.
+            return target == .connected
+                ? self.bluetoothRecovery.allowClaim()
+                : !self.bluetoothRecovery.isRelaunching
+        }
+        ownershipController.onOperationFinished = { [weak self] target, succeeded, automatic, unanswered in
+            self?.bluetoothRecovery.operationFinished(
+                target: target,
+                succeeded: succeeded,
+                automatic: automatic,
+                unanswered: unanswered
+            )
+        }
 
         ownershipController.onChange = { [weak self] snapshot in
             self?.settingsWindowController?.update(snapshot: snapshot)
@@ -98,11 +118,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 
         sleepMonitor.onWillSleep = { [weak self] in
+            self?.bluetoothRecovery.willSleep()
             self?.displayMonitor.setPrimaryDisplaySleeping(true)
             self?.ownershipController.willSleep()
         }
         sleepMonitor.onDidWake = { [weak self] in
             guard let self else { return }
+            // Before the wake-time claim, so a restart during sleep is handled first.
+            self.bluetoothRecovery.didWake()
             self.displayMonitor.setPrimaryDisplaySleeping(true)
             self.usbHubMonitor.refresh()
             self.displayMonitor.updatePrimaryHubSignal(
@@ -132,6 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.displayMonitor.setPrimaryScreensSleeping(false)
         }
 
+        // Record the Bluetooth daemon before any claim, so that a later restart is recognised.
+        bluetoothRecovery.start()
         sleepMonitor.start()
         let monitorPresent = displayMonitor.start()
         usbHubMonitor.start()
@@ -159,6 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        bluetoothRecovery.stop()
         sleepMonitor.stop()
         displayMonitor.stop()
         usbHubMonitor.stop()

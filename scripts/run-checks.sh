@@ -11,6 +11,7 @@ swiftc \
     -module-name GetKbdChecks \
     -o "$OUTPUT" \
     "$ROOT/Sources/GetKbd/BluetoothPowerController.swift" \
+    "$ROOT/Sources/GetKbd/BluetoothRecovery.swift" \
     "$ROOT/Sources/GetKbd/AppDelegate.swift" \
     "$ROOT/Sources/GetKbd/DisplayMonitor.swift" \
     "$ROOT/Sources/GetKbd/HubIdentification.swift" \
