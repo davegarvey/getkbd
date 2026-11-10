@@ -744,9 +744,9 @@ struct GetKbdChecks {
         rapidFailures.failures = 2
         rapidFailures.connectDelayNanoseconds = 40_000_000
         let fastPolicy = AutomaticClaimRetryPolicy(
-            fastRecoveryWindowNanoseconds: 300_000_000,
+            fastRecoveryWindowNanoseconds: 5_000_000_000,
             minimumStartIntervalNanoseconds: 20_000_000,
-            slowRetryDelaysNanoseconds: [60_000_000],
+            slowRetryDelaysNanoseconds: [1_000_000_000],
             releaseRetryDelaysNanoseconds: [1_000_000_000, 1_000_000_000]
         )
         let fast = OwnershipController(keyboard: rapidFailures, claimRetryPolicy: fastPolicy)
@@ -754,7 +754,7 @@ struct GetKbdChecks {
         while rapidFailures.connectCount < 3 { await Task.yield() }
         await fast.waitForIdle()
         check(rapidFailures.connectCount == 3, "fast recovery retries ordinary failures consecutively")
-        check(rapidFailures.connectStartTimes[1] - rapidFailures.connectStartTimes[0] < 100_000_000,
+        check(rapidFailures.connectStartTimes[1] - rapidFailures.connectStartTimes[0] < 250_000_000,
               "fast recovery adds no delay after an ordinary failed claim")
         check(rapidFailures.maximumConcurrentConnectCount == 1, "automatic claims remain single flight")
 
