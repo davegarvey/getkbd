@@ -255,82 +255,95 @@ struct SettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
 
     var body: some View {
-        Form {
-            if viewModel.setupStep != .complete || viewModel.completedSetupThisSession {
+        VStack(spacing: 0) {
+            Form {
+                if viewModel.setupStep != .complete || viewModel.completedSetupThisSession {
+                    Section {
+                        SetupSection(viewModel: viewModel)
+                    }
+                }
+
                 Section {
-                    SetupSection(viewModel: viewModel)
-                }
-            }
-
-            Section {
-                Picker(selection: Binding(
-                    get: { viewModel.settings.selectedKeyboard?.identifier ?? "" },
-                    set: { viewModel.selectKeyboard(identifier: $0) }
-                )) {
-                    if viewModel.settings.selectedKeyboard == nil {
-                        Text(viewModel.isLoadingKeyboards ? "Looking for keyboards…" : "Choose…").tag("")
+                    Picker(selection: Binding(
+                        get: { viewModel.settings.selectedKeyboard?.identifier ?? "" },
+                        set: { viewModel.selectKeyboard(identifier: $0) }
+                    )) {
+                        if viewModel.settings.selectedKeyboard == nil {
+                            Text(viewModel.isLoadingKeyboards ? "Looking for keyboards…" : "Choose…").tag("")
+                        }
+                        ForEach(viewModel.keyboardOptions) { keyboard in
+                            Text(keyboard.name).tag(keyboard.identifier)
+                        }
+                    } label: {
+                        Text("Keyboard")
                     }
-                    ForEach(viewModel.keyboardOptions) { keyboard in
-                        Text(keyboard.name).tag(keyboard.identifier)
+
+                    Picker(selection: Binding(
+                        get: { viewModel.settings.selectedDisplay?.identifier ?? "" },
+                        set: { viewModel.selectDisplay(identifier: $0) }
+                    )) {
+                        if viewModel.settings.selectedDisplay == nil {
+                            Text(viewModel.displayOptions.isEmpty ? "No monitor connected" : "Choose…").tag("")
+                        }
+                        ForEach(viewModel.displayOptions) { display in
+                            Text(display.name).tag(display.identifier)
+                        }
+                    } label: {
+                        RowLabel(title: "Monitor", note: viewModel.monitorNote)
                     }
-                } label: {
-                    Text("Keyboard")
-                }
 
-                Picker(selection: Binding(
-                    get: { viewModel.settings.selectedDisplay?.identifier ?? "" },
-                    set: { viewModel.selectDisplay(identifier: $0) }
-                )) {
-                    if viewModel.settings.selectedDisplay == nil {
-                        Text(viewModel.displayOptions.isEmpty ? "No monitor connected" : "Choose…").tag("")
+                    if viewModel.setupStep == .complete {
+                        MonitorSwitchingRow(viewModel: viewModel)
                     }
-                    ForEach(viewModel.displayOptions) { display in
-                        Text(display.name).tag(display.identifier)
+                }
+
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { viewModel.settings.switchMainDisplay },
+                        set: { viewModel.setSwitchMainDisplay($0) }
+                    )) {
+                        Text("Switch the main display with the monitor")
+                        Text("When the monitor switches to your other Mac, the menu bar and windows move to the built-in display.")
                     }
-                } label: {
-                    RowLabel(title: "Monitor", note: viewModel.monitorNote)
-                }
 
-                if viewModel.setupStep == .complete {
-                    MonitorSwitchingRow(viewModel: viewModel)
-                }
-            }
-
-            Section {
-                Toggle(isOn: Binding(
-                    get: { viewModel.settings.switchMainDisplay },
-                    set: { viewModel.setSwitchMainDisplay($0) }
-                )) {
-                    Text("Switch the main display with the monitor")
-                    Text("When the monitor switches to your other Mac, the menu bar and windows move to the built-in display.")
-                }
-
-                Toggle(isOn: Binding(
-                    get: { viewModel.settings.launchAtLogin },
-                    set: { viewModel.setLaunchAtLogin($0) }
-                )) {
-                    Text("Open at login")
+                    Toggle(isOn: Binding(
+                        get: { viewModel.settings.launchAtLogin },
+                        set: { viewModel.setLaunchAtLogin($0) }
+                    )) {
+                        Text("Open at login")
+                        if viewModel.loginNeedsApproval {
+                            Text("Needs approval in System Settings.")
+                        }
+                    }
                     if viewModel.loginNeedsApproval {
-                        Text("Needs approval in System Settings.")
+                        Button("Open Login Items…") {
+                            viewModel.openLoginSettings()
+                        }
                     }
                 }
-                if viewModel.loginNeedsApproval {
-                    Button("Open Login Items…") {
-                        viewModel.openLoginSettings()
-                    }
-                }
-            }
 
-            if !viewModel.message.isEmpty {
-                Section {
-                    Text(viewModel.message)
-                        .foregroundStyle(.secondary)
+                if !viewModel.message.isEmpty {
+                    Section {
+                        Text(viewModel.message)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
+            .formStyle(.grouped)
+
+            Text("Version \(appVersion)")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
         }
-        .formStyle(.grouped)
         .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
     }
 }
 
