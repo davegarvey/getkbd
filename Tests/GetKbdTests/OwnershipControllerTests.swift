@@ -346,6 +346,7 @@ final class OwnershipControllerTests: XCTestCase {
     func testAutomaticReleaseRetriesRemainUnchanged() async {
         let keyboard = FakeKeyboardController()
         keyboard.currentState = .connectedLocal
+        keyboard.isPaired = true
         keyboard.failNextDisconnects = 1
         let controller = OwnershipController(
             keyboard: keyboard,
@@ -399,6 +400,7 @@ private final class FakeKeyboardController: KeyboardControlling {
     var bluetoothAvailability: BluetoothAvailability = .poweredOn
     var onBluetoothAvailabilityChange: (() -> Void)?
     var currentState: KeyboardConnectionState = .disconnected
+    var isPaired = false
     var lastError: String?
     var onStateChange: ((KeyboardConnectionState) -> Void)?
     var connectCallCount = 0
@@ -479,6 +481,7 @@ private final class FakeKeyboardController: KeyboardControlling {
             return false
         }
         currentState = .disconnected
+        isPaired = false
         notify()
         return true
     }
