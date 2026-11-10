@@ -330,7 +330,7 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
 
     /// Opens a connection over the pairing this Mac already holds, without changing the pairing.
     enum ReconnectResult: Equatable {
-        case connected, failed, timedOut
+        case connected, failed, timedOut, cancelled
 
         var shouldFallbackToPairing: Bool { self == .failed }
     }
@@ -339,19 +339,23 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
         _ box: BluetoothDeviceBox,
         cancellation: CancellationFlag
     ) async -> ReconnectResult {
-        guard requireBluetooth(), !cancellation.isCancelled else { return .failed }
+        guard requireBluetooth() else { return .failed }
+        guard !cancellation.isCancelled else { return .cancelled }
         let device = box.device
         let deadline = Date().addingTimeInterval(5)
         guard let result = await runBluetoothCall(
             timeoutNanoseconds: Self.reconnectTimeoutNanoseconds,
             { box.device.openConnection() }
         ) else { return .timedOut }
-        guard result == kIOReturnSuccess, !cancellation.isCancelled else { return .failed }
+        guard !cancellation.isCancelled else { return .cancelled }
+        guard result == kIOReturnSuccess else { return .failed }
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0,
               await waitForConnection(device, connected: true, timeout: remaining) else { return .failed }
-        guard !cancellation.isCancelled else { return .failed }
-        return await runBluetoothCheck { device.isPaired() } ? .connected : .failed
+        guard !cancellation.isCancelled else { return .cancelled }
+        let isPaired = await runBluetoothCheck { device.isPaired() }
+        guard !cancellation.isCancelled else { return .cancelled }
+        return isPaired ? .connected : .failed
     }
 
     /// Looks the configured keyboard up again until Bluetooth reports a usable address for it.
