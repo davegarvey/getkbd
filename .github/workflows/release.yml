@@ -4,12 +4,17 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Semantic version tag to build and publish (for example, v0.2.0)
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: getkbd-release-${{ github.ref }}
+  group: getkbd-release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -17,10 +22,13 @@ jobs:
     name: Build macOS app
     runs-on: macos-26
     timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
       - name: Run Swift package tests
         run: swift test
@@ -28,9 +36,9 @@ jobs:
         run: bash scripts/run-checks.sh
       - name: Resolve semantic version from tag
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Expected a semantic version tag such as v1.2.3, got $GITHUB_REF_NAME" >&2
+          version="${RELEASE_TAG#v}"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a semantic version tag such as v1.2.3, got $RELEASE_TAG" >&2
             exit 1
           fi
           echo "GETKBD_VERSION=$version" >> "$GITHUB_ENV"
@@ -60,6 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Download release files
         uses: actions/download-artifact@v4
@@ -71,13 +81,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" \
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
               dist/getkbd-macos-universal.zip \
               dist/getkbd-macos-universal.zip.sha256 \
               --clobber
           else
-            gh release create "$GITHUB_REF_NAME" \
+            gh release create "$RELEASE_TAG" \
               --verify-tag \
               --generate-notes \
               dist/getkbd-macos-universal.zip \
