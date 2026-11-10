@@ -354,6 +354,7 @@ final class OwnershipControllerTests: XCTestCase {
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         controller.usbHubDisconnected()
+        await keyboard.waitUntilDisconnectCount(2)
         await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.disconnectCallCount, 2)
@@ -489,6 +490,12 @@ private final class FakeKeyboardController: KeyboardControlling {
 
     func waitUntilConnectCount(_ count: Int) async {
         while connectCallCount < count {
+            await Task.yield()
+        }
+    }
+
+    func waitUntilDisconnectCount(_ count: Int) async {
+        while disconnectCallCount < count {
             await Task.yield()
         }
     }
