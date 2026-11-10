@@ -11,13 +11,21 @@ over the display cable. It does not read keyboard or mouse input and does not us
 - A monitor with a KVM and a USB hub that appears only on the selected Mac
 - A way to change the monitor input: its controls, compatible input-switching software, or, on
   Apple Silicon Macs with a monitor that supports DDC/CI, the getkbd menu
-- Xcode Command Line Tools on each Mac
 
 The default build is ad-hoc signed and does not require an Apple Developer account.
 
 ## Install
 
-Run these commands on each Mac:
+Download the [getkbd app for macOS](https://github.com/davegarvey/getkbd/releases/latest/download/getkbd-macos-universal.zip),
+unzip it, and move `getkbd.app` into `~/Applications` (or `/Applications`). No local build tools
+are needed. The downloadable build is ad-hoc signed and not notarized. If macOS blocks it,
+Control-click the app, choose **Open**, and confirm. **Launch getkbd at login** requires a non-ad-hoc
+signed build and is unavailable in this download. Release tags use `vMAJOR.MINOR.PATCH` format, and
+the app's version follows the tag.
+
+To build from source instead, run these commands on each Mac:
+
+Building from source requires Xcode Command Line Tools with a compatible Swift 6.2 toolchain.
 
 ```sh
 git clone https://github.com/davegarvey/getkbd.git
