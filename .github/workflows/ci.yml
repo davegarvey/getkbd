@@ -27,4 +27,4 @@ jobs:
         run: swift test
       - name: Run project checks
         if: always()
-        run: scripts/run-checks.sh
+        run: bash scripts/run-checks.sh
