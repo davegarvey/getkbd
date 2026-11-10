@@ -35,7 +35,7 @@ For changes to keyboard handoff, USB hub detection, or monitor switching, descri
 
 ## Releases
 
-CI runs Grubble after checks pass on `main`. Conventional commit messages determine the next SemVer bump: `feat:` for minor, `fix:` for patch, and `!` or `BREAKING CHANGE:` for major. Grubble opens or refreshes a `release/vX.Y.Z` pull request with the changelog. Review and merge that PR; CI then tags the merge commit and builds the downloadable app. The first release uses `0.1.0` as Grubble's baseline.
+CI runs Grubble after checks pass on `main`. Conventional commit messages determine the next SemVer bump: `feat:` for minor, `fix:` for patch, and `!` or `BREAKING CHANGE:` for major. Grubble opens or refreshes a `release/vX.Y.Z` pull request with the changelog and enables GitHub auto-merge. GitHub merges the release PR once required checks pass; CI then tags the merge commit and builds the downloadable app. The first release uses `0.1.0` as Grubble's baseline.
 
 ## Pull requests
 
