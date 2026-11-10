@@ -168,3 +168,7 @@ log show --last 10m --predicate 'subsystem == "com.getkbd.app"' --style compact
 ```
 
 To watch events as they happen, replace `show --last 10m` with `stream`.
+
+## License
+
+getkbd is licensed under the [MIT License](LICENSE).

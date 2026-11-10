@@ -1,0 +1,63 @@
+name: PR approval policy
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: pr-approval-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  approval:
+    name: PR approval policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check approval policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          PULL_REQUEST_AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$PULL_REQUEST_AUTHOR" == "$REPOSITORY_OWNER" ]]; then
+            echo "Repository owner's PR; CI remains required, approval is not."
+            exit 0
+          fi
+
+          reviews="$(gh api --paginate --slurp \
+            "repos/$REPOSITORY/pulls/$PULL_REQUEST_NUMBER/reviews?per_page=100")"
+
+          latest_owner_review="$(jq -r \
+            --arg owner "$REPOSITORY_OWNER" \
+            --arg head "$HEAD_SHA" '
+              [
+                .[][] |
+                select(
+                  .user.login == $owner and
+                  .commit_id == $head and
+                  .dismissed_at == null and
+                  (.state == "APPROVED" or .state == "CHANGES_REQUESTED")
+                )
+              ] |
+              sort_by(.submitted_at // "") |
+              last |
+              .state // ""
+            ' <<< "$reviews")"
+
+          if [[ "$latest_owner_review" != "APPROVED" ]]; then
+            echo "An approval from @$REPOSITORY_OWNER on the latest commit is required."
+            exit 1
+          fi
+
+          echo "Approved by @$REPOSITORY_OWNER on the latest commit."
