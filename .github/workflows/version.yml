@@ -150,3 +150,12 @@ jobs:
               --title "Release v$version" \
               --body "$changelog_entry"
           fi
+
+          pr_number="$(gh pr list --state open --base main --head "$branch" --json number \
+            --jq '.[0].number // ""')"
+          if [[ -z "$pr_number" ]]; then
+            echo "::error::Could not find the release PR for $branch."
+            exit 1
+          fi
+
+          gh pr merge "$pr_number" --auto --squash
