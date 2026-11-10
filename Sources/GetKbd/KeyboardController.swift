@@ -612,7 +612,16 @@ final class IOBluetoothKeyboardController: KeyboardControlling {
     }
 
     private func runBluetoothCall(
-        timeoutNanoseconds: UInt64 = Self.operationTimeoutNanoseconds,
+        _ operation: @escaping @Sendable () -> IOReturn
+    ) async -> IOReturn? {
+        await runBluetoothCall(
+            timeoutNanoseconds: Self.operationTimeoutNanoseconds,
+            operation
+        )
+    }
+
+    private func runBluetoothCall(
+        timeoutNanoseconds: UInt64,
         _ operation: @escaping @Sendable () -> IOReturn
     ) async -> IOReturn? {
         await withCheckedContinuation { continuation in
