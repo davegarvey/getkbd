@@ -295,7 +295,7 @@ final class DisplayPrimaryTests: XCTestCase {
                 display("built-in", builtIn: true, active: true, x: -1440),
                 display("external", builtIn: false, active: true, x: 0)
             ],
-            mainIdentifier: "built-in"
+            mainIdentifier: "external"
         )
         let monitor = DisplayMonitor(
             configuredMonitor: MonitorIdentity(name: "External", knownIdentifiers: ["external"]),

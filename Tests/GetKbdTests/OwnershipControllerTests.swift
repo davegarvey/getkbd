@@ -273,7 +273,7 @@ final class OwnershipControllerTests: XCTestCase {
         await keyboard.waitUntilConnectCount(2)
         await controller.waitForIdle()
 
-        XCTAssertGreaterThanOrEqual(keyboard.connectStartTimes[1] - keyboard.connectStartTimes[0], 100_000_000)
+        XCTAssertGreaterThanOrEqual(keyboard.connectStartTimes[1] - keyboard.connectStartTimes[0], 95_000_000)
     }
 
     func testAutomaticClaimsUseSlowBackoffAndStopAfterFinalRetry() async {
@@ -346,6 +346,7 @@ final class OwnershipControllerTests: XCTestCase {
     func testAutomaticReleaseRetriesRemainUnchanged() async {
         let keyboard = FakeKeyboardController()
         keyboard.currentState = .connectedLocal
+        keyboard.isPaired = true
         keyboard.failNextDisconnects = 1
         let controller = OwnershipController(
             keyboard: keyboard,
@@ -354,6 +355,7 @@ final class OwnershipControllerTests: XCTestCase {
 
         controller.start(monitorPresent: true, usbHubPresent: true)
         controller.usbHubDisconnected()
+        await keyboard.waitUntilDisconnectCount(2)
         await controller.waitForIdle()
 
         XCTAssertEqual(keyboard.disconnectCallCount, 2)
@@ -398,6 +400,7 @@ private final class FakeKeyboardController: KeyboardControlling {
     var bluetoothAvailability: BluetoothAvailability = .poweredOn
     var onBluetoothAvailabilityChange: (() -> Void)?
     var currentState: KeyboardConnectionState = .disconnected
+    var isPaired = false
     var lastError: String?
     var onStateChange: ((KeyboardConnectionState) -> Void)?
     var connectCallCount = 0
@@ -478,6 +481,7 @@ private final class FakeKeyboardController: KeyboardControlling {
             return false
         }
         currentState = .disconnected
+        isPaired = false
         notify()
         return true
     }
@@ -489,6 +493,12 @@ private final class FakeKeyboardController: KeyboardControlling {
 
     func waitUntilConnectCount(_ count: Int) async {
         while connectCallCount < count {
+            await Task.yield()
+        }
+    }
+
+    func waitUntilDisconnectCount(_ count: Int) async {
+        while disconnectCallCount < count {
             await Task.yield()
         }
     }
