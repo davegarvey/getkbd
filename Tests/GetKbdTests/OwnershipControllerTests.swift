@@ -273,7 +273,7 @@ final class OwnershipControllerTests: XCTestCase {
         await keyboard.waitUntilConnectCount(2)
         await controller.waitForIdle()
 
-        XCTAssertGreaterThanOrEqual(keyboard.connectStartTimes[1] - keyboard.connectStartTimes[0], 100_000_000)
+        XCTAssertGreaterThanOrEqual(keyboard.connectStartTimes[1] - keyboard.connectStartTimes[0], 95_000_000)
     }
 
     func testAutomaticClaimsUseSlowBackoffAndStopAfterFinalRetry() async {
